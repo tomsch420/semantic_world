@@ -453,6 +453,33 @@ class World:
         raise ValueError(f'Connection with name {name} not found')
 
     @lru_cache(maxsize=None)
+    def compute_child_bodies(self, body: Body) -> List[Body]:
+        """
+        Computes the child bodies of a given body in the world.
+        :param body: The body for which to compute child bodies.
+        :return: A list of child bodies.
+        """
+        return list(self.kinematic_structure.successors(body))
+
+    @lru_cache(maxsize=None)
+    def compute_parent_body(self, body: Body) -> Body:
+        """
+        Computes the parent body of a given body in the world.
+        :param body: The body for which to compute the parent body.
+        :return: The parent body of the given body.
+        """
+        return next(self.kinematic_structure.predecessors(body))
+
+    @lru_cache(maxsize=None)
+    def compute_parent_connection(self, body: Body) -> Connection:
+        """
+        Computes the parent connection of a given body in the world.
+        :param body: The body for which to compute the parent connection.
+        :return: The parent connection of the given body.
+        """
+        return self.kinematic_structure.get_edge_data(self.compute_parent_body(body), body)[Connection.__name__]
+
+    @lru_cache(maxsize=None)
     def compute_chain_of_bodies(self, root: Body, tip: Body) -> List[Body]:
         return nx.shortest_path(self.kinematic_structure, root, tip)
 
