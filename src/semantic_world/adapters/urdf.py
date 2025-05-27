@@ -4,7 +4,7 @@ from typing import Optional, Tuple, Dict
 from ..spatial_types import spatial_types as cas
 from urdf_parser_py import urdf
 
-from ..connections import RevoluteConnection, PrismaticConnection, FixedConnection
+from ..connections import RevoluteConnection, PrismaticConnection, FixedConnection, UnitVector
 from ..prefixed_name import PrefixedName
 from ..spatial_types.derivatives import Derivatives
 from ..utils import suppress_stdout_stderr, hacky_urdf_parser_fix
@@ -153,7 +153,7 @@ class URDFParser:
 
         result = connection_type(parent=parent, child=child, origin=parent_T_child,
                                  multiplier=multiplier, offset=offset,
-                                 axis=joint.axis,
+                                 axis=UnitVector(*joint.axis),
                                  dof=dof)
         return result
 

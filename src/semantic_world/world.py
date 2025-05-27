@@ -1,21 +1,23 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
+from collections import defaultdict
 from dataclasses import dataclass, field
 from functools import wraps, lru_cache
-from typing import Dict, Tuple, OrderedDict, Union, Optional
+from typing import Dict, Tuple, OrderedDict, Union, Optional, List
 
 import networkx as nx
 import numpy as np
 from typing_extensions import List
 
-from .spatial_types import spatial_types as cas
-from .connections import HasUpdateState
-from .degree_of_freedom import DegreeOfFreedom
+from .geometry import Shape
+from .spatial_types import spatial_types as cas, TransformationMatrix
 from .prefixed_name import PrefixedName
 from .spatial_types.derivatives import Derivatives
 from .spatial_types.math import inverse_frame
+from .spatial_types.spatial_types import Expression
+from .spatial_types.symbol_manager import symbol_manager
 from .utils import IDGenerator, copy_lru_cache
-from .world_entity import Body, Connection, View
 
 id_generator = IDGenerator()
 
@@ -197,6 +199,117 @@ def modifies_world(func):
             return result
 
     return wrapper
+
+
+
+@dataclass(unsafe_hash=True)
+class WorldEntity:
+    """
+    A class representing an entity in the world.
+    """
+
+    _world: Optional[World] = field(default=None, repr=False, kw_only=True, hash=False)
+    """
+    The backreference to the world this entity belongs to.
+    """
+
+    _views: List[View] = field(default_factory=list, init=False, repr=False, hash=False)
+    """
+    The views this entity is part of.
+    """
+
+
+@dataclass
+class Body(WorldEntity):
+    """
+    Represents a body in the world.
+    A body is a semantic atom, meaning that it cannot be decomposed into meaningful smaller parts.
+    """
+
+    name: PrefixedName
+    """
+    The name of the link. Must be unique in the world.
+    If not provided, a unique name will be generated.
+    """
+
+    visual: List[Shape] = field(default_factory=list, repr=False)
+    """
+    List of shapes that represent the visual appearance of the link.
+    The poses of the shapes are relative to the link.
+    """
+
+    collision: List[Shape] = field(default_factory=list, repr=False)
+    """
+    List of shapes that represent the collision geometry of the link.
+    The poses of the shapes are relative to the link.
+    """
+
+    def __post_init__(self):
+        if not self.name:
+            self.name = PrefixedName(f"body_{id_generator(self)}")
+
+    def __hash__(self):
+        return hash(self.name)
+
+    def __eq__(self, other):
+        return self.name == other.name
+
+    def has_collision(self) -> bool:
+        return len(self.collision) > 0
+
+
+@dataclass
+class View(WorldEntity):
+    """
+    Represents a view on a set of bodies in the world.
+
+    This class can hold references to certain bodies that gain meaning in this context.
+    """
+
+
+@dataclass
+class Connection(WorldEntity):
+    """
+    Represents a connection between two bodies in the world.
+    """
+
+    parent: Body
+    """
+    The parent body of the connection.
+    """
+
+    child: Body
+    """
+    The child body of the connection.
+    """
+
+    origin: TransformationMatrix = None
+    """
+    The origin of the connection.
+    """
+
+    def __post_init__(self):
+        if self.origin is None:
+            self.origin = TransformationMatrix()
+        self.origin.reference_frame = self.parent.name
+        self.origin.child_frame = self.child.name
+
+    def __hash__(self):
+        return hash((self.parent, self.child))
+
+    def __eq__(self, other):
+        return self.name == other.name
+
+    @property
+    def name(self):
+        return PrefixedName(f'{self.parent.name.name}_T_{self.child.name.name}', prefix=self.child.name.prefix)
+
+    # @lru_cache(maxsize=None)
+    def origin_as_position_quaternion(self) -> Expression:
+        position = self.origin.to_position()[:3]
+        orientation = self.origin.to_quaternion()
+        return cas.vstack([position, orientation]).T
+
 
 
 @dataclass
@@ -647,3 +760,141 @@ class World:
             if isinstance(connection, HasUpdateState):
                 connection.update_state(dt)
         self.notify_state_change()
+
+
+class HasUpdateState(ABC):
+    """
+    Mixin class for connections that need state updated which are not trivial integrations.
+    Typically needed for connections that use active and passive degrees of freedom.
+    Look at OmniDrive for an example usage.
+    """
+
+    @abstractmethod
+    def update_state(self, dt: float) -> None:
+        """
+        Allows the connection to update the state of its dofs.
+        An integration update for active dofs will have happened before this method is called.
+        Write directly into self._world.state, but don't touch dofs that don't belong to this connection.
+        :param dt: Time passed since last update.
+        """
+        pass
+
+
+@dataclass
+class DegreeOfFreedom(WorldEntity):
+    """
+    A class representing a degree of freedom in a world model with associated derivatives and limits.
+
+    This class manages a variable that can freely change within specified limits, tracking its position,
+    velocity, acceleration, and jerk. It maintains symbolic representations for each derivative order
+    and provides methods to get and set limits for these derivatives.
+    """
+
+    name: PrefixedName
+    """
+    The identifier for this free variable
+    """
+
+    _lower_limits: Dict[Derivatives, Optional[float]] = field(default=None)
+    _upper_limits: Dict[Derivatives, Optional[float]] = field(default=None)
+    """
+    Lower and upper bounds for each derivative
+    """
+
+    _lower_limits_overwrite: Dict[Derivatives, Optional[float]] = field(default_factory=dict)
+    _upper_limits_overwrite: Dict[Derivatives, Optional[float]] = field(default_factory=dict)
+    """
+    Temporary lower and upper bound overwrites
+    """
+
+    state_idx: int = field(default=None, init=False)
+    """
+    Index of this variable in the world state
+    """
+
+    _derivative_symbols: Dict[Derivatives, cas.Symbol] = field(default_factory=dict, init=False)
+    """
+    Symbolic representations for each derivative
+    """
+
+    def __post_init__(self):
+        self._lower_limits = self._lower_limits or defaultdict(lambda: None)
+        self._upper_limits = self._upper_limits or defaultdict(lambda: None)
+        self.state_idx = len(self._world.degrees_of_freedom)
+
+        # Register symbols for all derivatives in one loop
+        for derivative in Derivatives.range(Derivatives.position, Derivatives.jerk):
+            s = cas.Symbol(f'{self.name}_{derivative}')
+            self._derivative_symbols[derivative] = s
+            symbol_manager.register_symbol(s, lambda d=derivative: self._world.state[d, self.state_idx])
+
+    @property
+    def position_symbol(self) -> cas.Symbol:
+        return self.get_symbol(Derivatives.position)
+
+    @property
+    def velocity_symbol(self) -> cas.Symbol:
+        return self.get_symbol(Derivatives.velocity)
+
+    @property
+    def acceleration_symbol(self) -> cas.Symbol:
+        return self.get_symbol(Derivatives.acceleration)
+
+    @property
+    def jerk_symbol(self) -> cas.Symbol:
+        return self.get_symbol(Derivatives.jerk)
+
+    def get_symbol(self, derivative: Derivatives) -> Union[cas.Symbol, float]:
+        try:
+            return self._derivative_symbols[derivative]
+        except KeyError:
+            raise KeyError(f'Free variable {self} doesn\'t have symbol for derivative of order {derivative}')
+
+    def reset_cache(self):
+        for method_name in dir(self):
+            try:
+                getattr(self, method_name).memo.clear()
+            except:
+                pass
+
+    @lru_cache(maxsize=None)
+    def get_lower_limit(self, derivative: Derivatives) -> Optional[float]:
+        if derivative in self._lower_limits and derivative in self._lower_limits_overwrite:
+            lower_limit = cas.max(self._lower_limits[derivative], self._lower_limits_overwrite[derivative])
+        elif derivative in self._lower_limits:
+            lower_limit = self._lower_limits[derivative]
+        elif derivative in self._lower_limits_overwrite:
+            lower_limit = self._lower_limits_overwrite[derivative]
+        else:
+            return None
+        return lower_limit
+
+    @lru_cache(maxsize=None)
+    def get_upper_limit(self, derivative: Derivatives) -> Optional[float]:
+        if derivative in self._upper_limits and derivative in self._upper_limits_overwrite:
+            upper_limit = cas.min(self._upper_limits[derivative], self._upper_limits_overwrite[derivative])
+        elif derivative in self._upper_limits:
+            upper_limit = self._upper_limits[derivative]
+        elif derivative in self._upper_limits_overwrite:
+            upper_limit = self._upper_limits_overwrite[derivative]
+        else:
+            return None
+        return upper_limit
+
+    def set_lower_limit(self, derivative: Derivatives, limit: float):
+        self._lower_limits_overwrite[derivative] = limit
+
+    def set_upper_limit(self, derivative: Derivatives, limit: float):
+        self._upper_limits_overwrite[derivative] = limit
+
+    @lru_cache(maxsize=None)
+    def has_position_limits(self) -> bool:
+        try:
+            lower_limit = self.get_lower_limit(Derivatives.position)
+            upper_limit = self.get_upper_limit(Derivatives.position)
+            return lower_limit is not None or upper_limit is not None
+        except KeyError:
+            return False
+
+    def __hash__(self):
+        return hash(id(self))

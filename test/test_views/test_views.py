@@ -19,7 +19,7 @@ from ripple_down_rules.rdr import GeneralRDR
 from semantic_world.adapters.urdf import URDFParser
 from semantic_world.views import *
 from semantic_world.views.world_rdr import world_rdr
-from semantic_world.world import World
+from semantic_world.world import World, View
 
 
 class ViewTestCase(unittest.TestCase):

@@ -1,17 +1,15 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import List, Tuple
 
 import numpy as np
 
 from . import spatial_types as cas
-from .degree_of_freedom import DegreeOfFreedom
 from .prefixed_name import PrefixedName
 from .spatial_types.derivatives import Derivatives
 from .spatial_types.math import rpy_from_quaternion
-from .world_entity import Connection
+from .world import Connection, HasUpdateState, DegreeOfFreedom
 
 
 @dataclass
@@ -39,12 +37,59 @@ class PassiveConnection(Connection):
 
 
 @dataclass
+class UnitVector:
+    """
+    Represents a unit vector which is always of size 1.
+    """
+
+    x: float
+    y: float
+    z: float
+
+    def __post_init__(self):
+        self.normalize()
+
+    def normalize(self):
+        length = self.length
+        self.x /= length
+        self.y /= length
+        self.z /= length
+
+    @property
+    def length(self):
+        return np.sqrt(self.x ** 2 + self.y ** 2 + self.z ** 2)
+
+    def __getitem__(self, item: int) -> float:
+        if item == 0:
+            return self.x
+        if item == 1:
+            return self.y
+        if item == 2:
+            return self.z
+        raise IndexError
+
+    def as_tuple(self) -> Tuple[float, float, float]:
+        return self.x, self.y, self.z
+
+    @classmethod
+    def X(cls):
+        return cls(1, 0, 0)
+
+    @classmethod
+    def Y(cls):
+        return cls(0, 1, 0)
+
+    @classmethod
+    def Z(cls):
+        return cls(0, 0, 1)
+
+@dataclass
 class PrismaticConnection(ActiveConnection):
     """
     Allows the movement along an axis.
     """
 
-    axis: Tuple[float, float, float] = field(kw_only=True)
+    axis: UnitVector = field(kw_only=True)
     """
     Connection moves along this axis, should be a unit vector.
     The axis is defined relative to the local reference frame of the parent body.
@@ -75,12 +120,11 @@ class PrismaticConnection(ActiveConnection):
             self.offset = 0
         else:
             self.offset = self.offset
-        self.axis = self.axis
         self.dof = self.dof or self._world.create_degree_of_freedom(name=PrefixedName(self.name))
         self.active_dofs = [self.dof]
 
         motor_expression = self.dof.get_symbol(Derivatives.position) * self.multiplier + self.offset
-        translation_axis = cas.Vector3(self.axis) * motor_expression
+        translation_axis = cas.Vector3(self.axis.as_tuple()) * motor_expression
         parent_T_child = cas.TransformationMatrix.from_xyz_rpy(x=translation_axis[0],
                                                                y=translation_axis[1],
                                                                z=translation_axis[2])
@@ -93,7 +137,7 @@ class RevoluteConnection(ActiveConnection):
     Allows rotation about an axis.
     """
 
-    axis: Tuple[float, float, float] = field(kw_only=True)
+    axis: UnitVector = field(kw_only=True)
     """
     Connection rotates about this axis, should be a unit vector.
     The axis is defined relative to the local reference frame of the parent body.
@@ -190,24 +234,6 @@ class Connection6DoF(PassiveConnection):
         self._world.state[Derivatives.position][self.qy.state_idx] = orientation[1]
         self._world.state[Derivatives.position][self.qz.state_idx] = orientation[2]
         self._world.state[Derivatives.position][self.qw.state_idx] = orientation[3]
-
-
-class HasUpdateState(ABC):
-    """
-    Mixin class for connections that need state updated which are not trivial integrations.
-    Typically needed for connections that use active and passive degrees of freedom.
-    Look at OmniDrive for an example usage.
-    """
-
-    @abstractmethod
-    def update_state(self, dt: float) -> None:
-        """
-        Allows the connection to update the state of its dofs.
-        An integration update for active dofs will have happened before this method is called.
-        Write directly into self._world.state, but don't touch dofs that don't belong to this connection.
-        :param dt: Time passed since last update.
-        """
-        pass
 
 
 @dataclass

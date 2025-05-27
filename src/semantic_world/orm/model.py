@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Type
+from typing import Type, List
 
 from ormatic.utils import classproperty
 
@@ -11,6 +11,7 @@ from sqlalchemy.types import TypeDecorator, String
 from ormatic.ormatic import ORMaticExplicitMapping
 
 from ..spatial_types.spatial_types import Quaternion
+from ..world import World, Connection, Body
 
 
 class Vector3Type(TypeDecorator):
@@ -72,6 +73,15 @@ class TransformationMatrixType(TypeDecorator):
         return TransformationMatrix.from_point_rotation_matrix(position, rotation, reference_frame=reference_frame,
                                                                child_frame=child_frame)
 
+
+class WorldDAO(ORMaticExplicitMapping):
+
+    bodies: List[Body]
+    connections: List[Connection]
+
+    @classproperty
+    def explicit_mapping(cls) -> Type:
+        return World
 
 custom_types = {Vector3: Vector3Type(),
                 Point3: Point3Type(),

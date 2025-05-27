@@ -1,15 +1,12 @@
-import os
 import pytest
 import numpy as np
-from networkx.exception import NetworkXNoPath
+import pytest
 
-from semantic_world.adapters.urdf import URDFParser
-from semantic_world.connections import PrismaticConnection, RevoluteConnection, Connection6DoF, OmniDrive, \
-    FixedConnection
+from semantic_world.connections import PrismaticConnection, RevoluteConnection, Connection6DoF, FixedConnection, UnitVector
 from semantic_world.prefixed_name import PrefixedName
 from semantic_world.spatial_types.derivatives import Derivatives
 from semantic_world.spatial_types.symbol_manager import symbol_manager
-from semantic_world.world import World, Body, Connection
+from semantic_world.world import World, Body
 
 
 @pytest.fixture
@@ -26,8 +23,8 @@ def world_setup():
                                              lower_limits={Derivatives.velocity: -1},
                                              upper_limits={Derivatives.velocity: 1})
 
-        c_l1_l2 = PrismaticConnection(l1, l2, dof=dof, axis=(1, 0, 0))
-        c_r1_r2 = RevoluteConnection(r1, r2, dof=dof, axis=(0, 0, 1))
+        c_l1_l2 = PrismaticConnection(l1, l2, dof=dof, axis=UnitVector.X())
+        c_r1_r2 = RevoluteConnection(r1, r2, dof=dof, axis=UnitVector.Z())
         bf_root_l1 = FixedConnection(bf, l1)
         bf_root_r1 = FixedConnection(bf, r1)
         c_root_bf = Connection6DoF(parent=world.root, child=bf, _world=world)
