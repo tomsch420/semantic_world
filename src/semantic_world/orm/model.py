@@ -73,11 +73,11 @@ class TransformationMatrixType(TypeDecorator):
         return TransformationMatrix.from_point_rotation_matrix(position, rotation, reference_frame=reference_frame,
                                                                child_frame=child_frame)
 
-
+@dataclass
 class WorldDAO(ORMaticExplicitMapping):
 
-    bodies: List[Body]
-    connections: List[Connection]
+    # bodies: List[Body]
+    # connections: List[Connection]
 
     @classproperty
     def explicit_mapping(cls) -> Type:

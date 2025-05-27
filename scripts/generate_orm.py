@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+from enum import Enum
 
 from ormatic.ormatic import logger, ORMatic
 from ormatic.utils import classes_of_module, recursive_subclasses
@@ -33,6 +34,7 @@ classes |= set(classes_of_module(semantic_world.connections))
 # remove classes that should not be mapped
 classes -= {OmniDrive, ResetStateContextManager, WorldModelUpdateContextManager, HasUpdateState, WorldVisitor, World}
 classes -= set(recursive_subclasses(WorldVisitor))
+classes -= set(recursive_subclasses(Enum))
 
 print(list(classes))
 
