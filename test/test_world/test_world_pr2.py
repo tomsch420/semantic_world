@@ -150,19 +150,19 @@ def test_apply_control_commands_omni_drive_pr2(pr2_world):
     assert pr2_world.state[Derivatives.jerk, omni_drive.x_vel.state_idx] == 100.
     assert pr2_world.state[Derivatives.acceleration, omni_drive.x_vel.state_idx] == 100. * dt
     assert pr2_world.state[Derivatives.velocity, omni_drive.x_vel.state_idx] == 100. * dt * dt
-    assert pr2_world.state[Derivatives.position, omni_drive.x_vel.state_idx] == 0.1 # 0
+    assert pr2_world.state[Derivatives.position, omni_drive.x_vel.state_idx] == 0
 
     assert pr2_world.state[Derivatives.jerk, omni_drive.y_vel.state_idx] == 100.
     assert pr2_world.state[Derivatives.acceleration, omni_drive.y_vel.state_idx] == 100. * dt
     assert pr2_world.state[Derivatives.velocity, omni_drive.y_vel.state_idx] == 100. * dt * dt
-    assert pr2_world.state[Derivatives.position, omni_drive.y_vel.state_idx] == 0.1 # 0
+    assert pr2_world.state[Derivatives.position, omni_drive.y_vel.state_idx] == 0
 
     assert pr2_world.state[Derivatives.jerk, omni_drive.x.state_idx] == 0.
     assert pr2_world.state[Derivatives.acceleration, omni_drive.x.state_idx] == 0.
-    assert pr2_world.state[Derivatives.velocity, omni_drive.x.state_idx] == 0. # 0.8951707486311977
-    assert pr2_world.state[Derivatives.position, omni_drive.x.state_idx] == 0. # 0.08951707486311977
+    assert pr2_world.state[Derivatives.velocity, omni_drive.x.state_idx] == 0.8951707486311977
+    assert pr2_world.state[Derivatives.position, omni_drive.x.state_idx] == 0.08951707486311977
 
     assert pr2_world.state[Derivatives.jerk, omni_drive.y.state_idx] == 0.
     assert pr2_world.state[Derivatives.acceleration, omni_drive.y.state_idx] == 0.
-    assert pr2_world.state[Derivatives.velocity, omni_drive.y.state_idx] == 0. # 1.094837581924854
-    assert pr2_world.state[Derivatives.position, omni_drive.y.state_idx] == 0. # 0.1094837581924854
+    assert pr2_world.state[Derivatives.velocity, omni_drive.y.state_idx] == 1.094837581924854
+    assert pr2_world.state[Derivatives.position, omni_drive.y.state_idx] == 0.1094837581924854

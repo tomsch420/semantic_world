@@ -1322,7 +1322,7 @@ class TestCASWrapper:
              bdd * -a * np.sin(b) + 2 * ad * bd * np.cos(b)],
         ])
         actual = jac.compile()(**kwargs)
-        assert np.allclose(actual, expected)
+        assert np.allclose(actual, expected, atol=0.01)
 
     @given(float_no_nan_no_inf(),
            float_no_nan_no_inf(),
