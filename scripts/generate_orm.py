@@ -32,7 +32,7 @@ classes |= set(classes_of_module(semantic_world.prefixed_name))
 classes |= set(classes_of_module(semantic_world.connections))
 
 # remove classes that should not be mapped
-classes -= {OmniDrive, ResetStateContextManager, WorldModelUpdateContextManager, HasUpdateState, WorldVisitor, World}
+classes -= {ResetStateContextManager, WorldModelUpdateContextManager, HasUpdateState, WorldVisitor, World}
 classes -= set(recursive_subclasses(WorldVisitor))
 classes -= set(recursive_subclasses(Enum))
 classes -= {WorldDAO}

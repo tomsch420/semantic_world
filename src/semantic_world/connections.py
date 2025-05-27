@@ -237,7 +237,9 @@ class Connection6DoF(PassiveConnection):
 
 
 @dataclass
-class OmniDrive(ActiveConnection, PassiveConnection, HasUpdateState):
+class OmniDrive(ActiveConnection): # fix when multiple inheritance in ORMatic is supported, PassiveConnection, HasUpdateState):
+    active_dofs: List[DegreeOfFreedom] = field(default_factory=list, init=False)
+    passive_dofs: List[DegreeOfFreedom] = field(default_factory=list, init=False)
     x: DegreeOfFreedom = field(default=None)
     y: DegreeOfFreedom = field(default=None)
     z: DegreeOfFreedom = field(default=None)

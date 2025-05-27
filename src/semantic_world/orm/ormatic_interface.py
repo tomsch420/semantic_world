@@ -19,6 +19,32 @@ t_Color = Table(
     Column('A', Float, nullable=False)
 )
 
+t_DegreeOfFreedom = Table(
+    'DegreeOfFreedom', metadata,
+    Column('id', ForeignKey('WorldEntity.id'), primary_key=True),
+    Column('name_id', ForeignKey('PrefixedName.id'), nullable=False),
+    Column('state_idx', Integer, nullable=False),
+    Column('activeconnection_active_dofs_id', Integer, ForeignKey('ActiveConnection.id'), nullable=True),
+    Column('passiveconnection_passive_dofs_id', Integer, ForeignKey('PassiveConnection.id'), nullable=True),
+    Column('omnidrive_active_dofs_id', Integer, ForeignKey('OmniDrive.id'), nullable=True),
+    Column('omnidrive_passive_dofs_id', Integer, ForeignKey('OmniDrive.id'), nullable=True)
+)
+
+t_OmniDrive = Table(
+    'OmniDrive', metadata,
+    Column('id', ForeignKey('ActiveConnection.id'), primary_key=True),
+    Column('x_id', ForeignKey('DegreeOfFreedom.id'), nullable=False),
+    Column('y_id', ForeignKey('DegreeOfFreedom.id'), nullable=False),
+    Column('z_id', ForeignKey('DegreeOfFreedom.id'), nullable=False),
+    Column('roll_id', ForeignKey('DegreeOfFreedom.id'), nullable=False),
+    Column('pitch_id', ForeignKey('DegreeOfFreedom.id'), nullable=False),
+    Column('yaw_id', ForeignKey('DegreeOfFreedom.id'), nullable=False),
+    Column('x_vel_id', ForeignKey('DegreeOfFreedom.id'), nullable=False),
+    Column('y_vel_id', ForeignKey('DegreeOfFreedom.id'), nullable=False),
+    Column('translation_velocity_limits', Float, nullable=False),
+    Column('rotation_velocity_limits', Float, nullable=False)
+)
+
 t_PrefixedName = Table(
     'PrefixedName', metadata,
     Column('id', Integer, primary_key=True),
@@ -110,28 +136,6 @@ t_Box = Table(
     Column('scale_id', ForeignKey('Scale.id'), nullable=False)
 )
 
-t_Cylinder = Table(
-    'Cylinder', metadata,
-    Column('id', ForeignKey('Primitive.id'), primary_key=True),
-    Column('width', Float, nullable=False),
-    Column('height', Float, nullable=False)
-)
-
-t_DegreeOfFreedom = Table(
-    'DegreeOfFreedom', metadata,
-    Column('id', ForeignKey('WorldEntity.id'), primary_key=True),
-    Column('name_id', ForeignKey('PrefixedName.id'), nullable=False),
-    Column('state_idx', Integer, nullable=False),
-    Column('passiveconnection_passive_dofs_id', ForeignKey('PassiveConnection.id')),
-    Column('activeconnection_active_dofs_id', ForeignKey('ActiveConnection.id'))
-)
-
-t_Sphere = Table(
-    'Sphere', metadata,
-    Column('id', ForeignKey('Primitive.id'), primary_key=True),
-    Column('radius', Float, nullable=False)
-)
-
 t_Connection6DoF = Table(
     'Connection6DoF', metadata,
     Column('id', ForeignKey('PassiveConnection.id'), primary_key=True),
@@ -142,6 +146,13 @@ t_Connection6DoF = Table(
     Column('qy_id', ForeignKey('DegreeOfFreedom.id'), nullable=False),
     Column('qz_id', ForeignKey('DegreeOfFreedom.id'), nullable=False),
     Column('qw_id', ForeignKey('DegreeOfFreedom.id'), nullable=False)
+)
+
+t_Cylinder = Table(
+    'Cylinder', metadata,
+    Column('id', ForeignKey('Primitive.id'), primary_key=True),
+    Column('width', Float, nullable=False),
+    Column('height', Float, nullable=False)
 )
 
 t_PrismaticConnection = Table(
@@ -162,7 +173,17 @@ t_RevoluteConnection = Table(
     Column('dof_id', ForeignKey('DegreeOfFreedom.id'), nullable=False)
 )
 
+t_Sphere = Table(
+    'Sphere', metadata,
+    Column('id', ForeignKey('Primitive.id'), primary_key=True),
+    Column('radius', Float, nullable=False)
+)
+
 mapper_registry = registry(metadata=metadata)
+
+m_Scale = mapper_registry.map_imperatively(semantic_world.geometry.Scale, t_Scale, )
+
+m_PrefixedName = mapper_registry.map_imperatively(semantic_world.prefixed_name.PrefixedName, t_PrefixedName, )
 
 m_Shape = mapper_registry.map_imperatively(semantic_world.geometry.Shape, t_Shape, properties = dict(origin=t_Shape.c.origin), polymorphic_on = "polymorphic_type", polymorphic_identity = "Shape")
 
@@ -172,37 +193,50 @@ m_UnitVector = mapper_registry.map_imperatively(semantic_world.connections.UnitV
 
 m_Color = mapper_registry.map_imperatively(semantic_world.geometry.Color, t_Color, )
 
-m_Scale = mapper_registry.map_imperatively(semantic_world.geometry.Scale, t_Scale, )
-
-m_PrefixedName = mapper_registry.map_imperatively(semantic_world.prefixed_name.PrefixedName, t_PrefixedName, )
-
 m_Primitive = mapper_registry.map_imperatively(semantic_world.geometry.Primitive, t_Primitive, properties = dict(color=relationship('Color',foreign_keys=[t_Primitive.c.color_id])), polymorphic_identity = "Primitive", inherits = m_Shape)
 
 m_Mesh = mapper_registry.map_imperatively(semantic_world.geometry.Mesh, t_Mesh, properties = dict(scale=relationship('Scale',foreign_keys=[t_Mesh.c.scale_id])), polymorphic_identity = "Mesh", inherits = m_Shape)
-
-m_Connection = mapper_registry.map_imperatively(semantic_world.world.Connection, t_Connection, properties = dict(parent=relationship('Body',foreign_keys=[t_Connection.c.parent_id]), 
-child=relationship('Body',foreign_keys=[t_Connection.c.child_id]), 
-origin=t_Connection.c.origin), polymorphic_identity = "Connection", inherits = m_WorldEntity)
-
-m_View = mapper_registry.map_imperatively(semantic_world.world.View, t_View, polymorphic_identity = "View", inherits = m_WorldEntity)
 
 m_Body = mapper_registry.map_imperatively(semantic_world.world.Body, t_Body, properties = dict(name=relationship('PrefixedName',foreign_keys=[t_Body.c.name_id]), 
 visual=relationship('Shape',foreign_keys=[t_Shape.c.body_visual_id]), 
 collision=relationship('Shape',foreign_keys=[t_Shape.c.body_collision_id])), polymorphic_identity = "Body", inherits = m_WorldEntity)
 
+m_Connection = mapper_registry.map_imperatively(semantic_world.world.Connection, t_Connection, properties = dict(parent=relationship('Body',foreign_keys=[t_Connection.c.parent_id]), 
+child=relationship('Body',foreign_keys=[t_Connection.c.child_id]), 
+origin=t_Connection.c.origin), polymorphic_identity = "Connection", inherits = m_WorldEntity)
+
 m_DegreeOfFreedom = mapper_registry.map_imperatively(semantic_world.world.DegreeOfFreedom, t_DegreeOfFreedom, properties = dict(name=relationship('PrefixedName',foreign_keys=[t_DegreeOfFreedom.c.name_id])), polymorphic_identity = "DegreeOfFreedom", inherits = m_WorldEntity)
 
-m_Cylinder = mapper_registry.map_imperatively(semantic_world.geometry.Cylinder, t_Cylinder, polymorphic_identity = "Cylinder", inherits = m_Primitive)
+m_View = mapper_registry.map_imperatively(semantic_world.world.View, t_View, polymorphic_identity = "View", inherits = m_WorldEntity)
 
 m_Box = mapper_registry.map_imperatively(semantic_world.geometry.Box, t_Box, properties = dict(scale=relationship('Scale',foreign_keys=[t_Box.c.scale_id])), polymorphic_identity = "Box", inherits = m_Primitive)
 
 m_Sphere = mapper_registry.map_imperatively(semantic_world.geometry.Sphere, t_Sphere, polymorphic_identity = "Sphere", inherits = m_Primitive)
 
-m_PassiveConnection = mapper_registry.map_imperatively(semantic_world.connections.PassiveConnection, t_PassiveConnection, properties = dict(passive_dofs=relationship('DegreeOfFreedom',foreign_keys=[t_DegreeOfFreedom.c.passiveconnection_passive_dofs_id])), polymorphic_identity = "PassiveConnection", inherits = m_Connection)
+m_Cylinder = mapper_registry.map_imperatively(semantic_world.geometry.Cylinder, t_Cylinder, polymorphic_identity = "Cylinder", inherits = m_Primitive)
+
+m_FixedConnection = mapper_registry.map_imperatively(semantic_world.connections.FixedConnection, t_FixedConnection, polymorphic_identity = "FixedConnection", inherits = m_Connection)
 
 m_ActiveConnection = mapper_registry.map_imperatively(semantic_world.connections.ActiveConnection, t_ActiveConnection, properties = dict(active_dofs=relationship('DegreeOfFreedom',foreign_keys=[t_DegreeOfFreedom.c.activeconnection_active_dofs_id])), polymorphic_identity = "ActiveConnection", inherits = m_Connection)
 
-m_FixedConnection = mapper_registry.map_imperatively(semantic_world.connections.FixedConnection, t_FixedConnection, polymorphic_identity = "FixedConnection", inherits = m_Connection)
+m_PassiveConnection = mapper_registry.map_imperatively(semantic_world.connections.PassiveConnection, t_PassiveConnection, properties = dict(passive_dofs=relationship('DegreeOfFreedom',foreign_keys=[t_DegreeOfFreedom.c.passiveconnection_passive_dofs_id])), polymorphic_identity = "PassiveConnection", inherits = m_Connection)
+
+m_PrismaticConnection = mapper_registry.map_imperatively(semantic_world.connections.PrismaticConnection, t_PrismaticConnection, properties = dict(axis=relationship('UnitVector',foreign_keys=[t_PrismaticConnection.c.axis_id]), 
+dof=relationship('DegreeOfFreedom',foreign_keys=[t_PrismaticConnection.c.dof_id])), polymorphic_identity = "PrismaticConnection", inherits = m_ActiveConnection)
+
+m_OmniDrive = mapper_registry.map_imperatively(semantic_world.connections.OmniDrive, t_OmniDrive, properties = dict(x=relationship('DegreeOfFreedom',foreign_keys=[t_OmniDrive.c.x_id]), 
+y=relationship('DegreeOfFreedom',foreign_keys=[t_OmniDrive.c.y_id]), 
+z=relationship('DegreeOfFreedom',foreign_keys=[t_OmniDrive.c.z_id]), 
+roll=relationship('DegreeOfFreedom',foreign_keys=[t_OmniDrive.c.roll_id]), 
+pitch=relationship('DegreeOfFreedom',foreign_keys=[t_OmniDrive.c.pitch_id]), 
+yaw=relationship('DegreeOfFreedom',foreign_keys=[t_OmniDrive.c.yaw_id]), 
+x_vel=relationship('DegreeOfFreedom',foreign_keys=[t_OmniDrive.c.x_vel_id]), 
+y_vel=relationship('DegreeOfFreedom',foreign_keys=[t_OmniDrive.c.y_vel_id]), 
+active_dofs=relationship('DegreeOfFreedom',foreign_keys=[t_DegreeOfFreedom.c.omnidrive_active_dofs_id]), 
+passive_dofs=relationship('DegreeOfFreedom',foreign_keys=[t_DegreeOfFreedom.c.omnidrive_passive_dofs_id])), polymorphic_identity = "OmniDrive", inherits = m_ActiveConnection)
+
+m_RevoluteConnection = mapper_registry.map_imperatively(semantic_world.connections.RevoluteConnection, t_RevoluteConnection, properties = dict(axis=relationship('UnitVector',foreign_keys=[t_RevoluteConnection.c.axis_id]), 
+dof=relationship('DegreeOfFreedom',foreign_keys=[t_RevoluteConnection.c.dof_id])), polymorphic_identity = "RevoluteConnection", inherits = m_ActiveConnection)
 
 m_Connection6DoF = mapper_registry.map_imperatively(semantic_world.connections.Connection6DoF, t_Connection6DoF, properties = dict(x=relationship('DegreeOfFreedom',foreign_keys=[t_Connection6DoF.c.x_id]), 
 y=relationship('DegreeOfFreedom',foreign_keys=[t_Connection6DoF.c.y_id]), 
@@ -211,9 +245,3 @@ qx=relationship('DegreeOfFreedom',foreign_keys=[t_Connection6DoF.c.qx_id]),
 qy=relationship('DegreeOfFreedom',foreign_keys=[t_Connection6DoF.c.qy_id]), 
 qz=relationship('DegreeOfFreedom',foreign_keys=[t_Connection6DoF.c.qz_id]), 
 qw=relationship('DegreeOfFreedom',foreign_keys=[t_Connection6DoF.c.qw_id])), polymorphic_identity = "Connection6DoF", inherits = m_PassiveConnection)
-
-m_PrismaticConnection = mapper_registry.map_imperatively(semantic_world.connections.PrismaticConnection, t_PrismaticConnection, properties = dict(axis=relationship('UnitVector',foreign_keys=[t_PrismaticConnection.c.axis_id]), 
-dof=relationship('DegreeOfFreedom',foreign_keys=[t_PrismaticConnection.c.dof_id])), polymorphic_identity = "PrismaticConnection", inherits = m_ActiveConnection)
-
-m_RevoluteConnection = mapper_registry.map_imperatively(semantic_world.connections.RevoluteConnection, t_RevoluteConnection, properties = dict(axis=relationship('UnitVector',foreign_keys=[t_RevoluteConnection.c.axis_id]), 
-dof=relationship('DegreeOfFreedom',foreign_keys=[t_RevoluteConnection.c.dof_id])), polymorphic_identity = "RevoluteConnection", inherits = m_ActiveConnection)
