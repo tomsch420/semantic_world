@@ -14,6 +14,8 @@ from semantic_world.prefixed_name import PrefixedName
 from semantic_world.world import World
 from semantic_world.world_entity import WorldEntity, View, Connection, Body
 from semantic_world.spatial_types import Vector3, Point3, RotationMatrix, TransformationMatrix, ReferenceFrameMixin
+from ormatic.utils import classes_of_module
+import semantic_world.geometry
 
 # ----------------------------------------------------------------------------------------------------------------------
 # This script generates the ORM classes for the semantic_world package.
@@ -22,6 +24,14 @@ from semantic_world.spatial_types import Vector3, Point3, RotationMatrix, Transf
 # Classes that are self_mapped and explicitly_mapped are already mapped in the model.py file. Look there for more
 # information on how to map them.
 # ----------------------------------------------------------------------------------------------------------------------
+
+classes = set()
+classes |= set(classes_of_module(semantic_world.geometry))
+
+print(classes)
+exit()
+
+
 
 classes = [Color, Scale, Shape, Mesh, Primitive, Sphere, Cylinder, Box, World, WorldEntity, Body, View, Connection,
            PrefixedName, FixedConnection, DegreeOfFreedom,
