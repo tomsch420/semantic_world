@@ -76,7 +76,7 @@ class TransformationMatrixType(TypeDecorator):
 @dataclass
 class WorldDAO(ORMaticExplicitMapping):
 
-    # bodies: List[Body]
+    bodies: List[Body]
     # connections: List[Connection]
 
     @classproperty

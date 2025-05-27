@@ -1,15 +1,15 @@
 import os
-import pytest
+
 import numpy as np
+import pytest
 from networkx.exception import NetworkXNoPath
 
 from semantic_world.adapters.urdf import URDFParser
-from semantic_world.connections import PrismaticConnection, RevoluteConnection, Connection6DoF, OmniDrive, \
-    FixedConnection
+from semantic_world.connections import Connection6DoF, OmniDrive
 from semantic_world.prefixed_name import PrefixedName
 from semantic_world.spatial_types.derivatives import Derivatives
 from semantic_world.spatial_types.symbol_manager import symbol_manager
-from semantic_world.world import World, Body, Connection
+from semantic_world.world import World, Body
 
 
 @pytest.fixture

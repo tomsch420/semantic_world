@@ -35,8 +35,8 @@ classes |= set(classes_of_module(semantic_world.connections))
 classes -= {OmniDrive, ResetStateContextManager, WorldModelUpdateContextManager, HasUpdateState, WorldVisitor, World}
 classes -= set(recursive_subclasses(WorldVisitor))
 classes -= set(recursive_subclasses(Enum))
+classes -= {WorldDAO}
 
-print(list(classes))
 
 def generate_orm():
     """

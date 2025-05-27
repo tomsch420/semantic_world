@@ -4,7 +4,6 @@ from sqlalchemy import Column, Float, ForeignKey, Integer, MetaData, String, Tab
 from sqlalchemy.orm import RelationshipProperty, registry, relationship
 import semantic_world.connections
 import semantic_world.geometry
-import semantic_world.orm.model
 import semantic_world.prefixed_name
 import semantic_world.world
 
@@ -41,11 +40,6 @@ t_UnitVector = Table(
     Column('x', Float, nullable=False),
     Column('y', Float, nullable=False),
     Column('z', Float, nullable=False)
-)
-
-t_World = Table(
-    'World', metadata,
-    Column('id', Integer, primary_key=True)
 )
 
 t_WorldEntity = Table(
@@ -170,23 +164,21 @@ t_RevoluteConnection = Table(
 
 mapper_registry = registry(metadata=metadata)
 
-m_Scale = mapper_registry.map_imperatively(semantic_world.geometry.Scale, t_Scale, )
+m_Shape = mapper_registry.map_imperatively(semantic_world.geometry.Shape, t_Shape, properties = dict(origin=t_Shape.c.origin), polymorphic_on = "polymorphic_type", polymorphic_identity = "Shape")
 
 m_WorldEntity = mapper_registry.map_imperatively(semantic_world.world.WorldEntity, t_WorldEntity, polymorphic_on = "polymorphic_type", polymorphic_identity = "WorldEntity")
-
-m_Shape = mapper_registry.map_imperatively(semantic_world.geometry.Shape, t_Shape, properties = dict(origin=t_Shape.c.origin), polymorphic_on = "polymorphic_type", polymorphic_identity = "Shape")
 
 m_UnitVector = mapper_registry.map_imperatively(semantic_world.connections.UnitVector, t_UnitVector, )
 
 m_Color = mapper_registry.map_imperatively(semantic_world.geometry.Color, t_Color, )
 
-m_World = mapper_registry.map_imperatively(semantic_world.world.World, t_World, )
+m_Scale = mapper_registry.map_imperatively(semantic_world.geometry.Scale, t_Scale, )
 
 m_PrefixedName = mapper_registry.map_imperatively(semantic_world.prefixed_name.PrefixedName, t_PrefixedName, )
 
-m_Body = mapper_registry.map_imperatively(semantic_world.world.Body, t_Body, properties = dict(name=relationship('PrefixedName',foreign_keys=[t_Body.c.name_id]), 
-visual=relationship('Shape',foreign_keys=[t_Shape.c.body_visual_id]), 
-collision=relationship('Shape',foreign_keys=[t_Shape.c.body_collision_id])), polymorphic_identity = "Body", inherits = m_WorldEntity)
+m_Primitive = mapper_registry.map_imperatively(semantic_world.geometry.Primitive, t_Primitive, properties = dict(color=relationship('Color',foreign_keys=[t_Primitive.c.color_id])), polymorphic_identity = "Primitive", inherits = m_Shape)
+
+m_Mesh = mapper_registry.map_imperatively(semantic_world.geometry.Mesh, t_Mesh, properties = dict(scale=relationship('Scale',foreign_keys=[t_Mesh.c.scale_id])), polymorphic_identity = "Mesh", inherits = m_Shape)
 
 m_Connection = mapper_registry.map_imperatively(semantic_world.world.Connection, t_Connection, properties = dict(parent=relationship('Body',foreign_keys=[t_Connection.c.parent_id]), 
 child=relationship('Body',foreign_keys=[t_Connection.c.child_id]), 
@@ -194,23 +186,23 @@ origin=t_Connection.c.origin), polymorphic_identity = "Connection", inherits = m
 
 m_View = mapper_registry.map_imperatively(semantic_world.world.View, t_View, polymorphic_identity = "View", inherits = m_WorldEntity)
 
+m_Body = mapper_registry.map_imperatively(semantic_world.world.Body, t_Body, properties = dict(name=relationship('PrefixedName',foreign_keys=[t_Body.c.name_id]), 
+visual=relationship('Shape',foreign_keys=[t_Shape.c.body_visual_id]), 
+collision=relationship('Shape',foreign_keys=[t_Shape.c.body_collision_id])), polymorphic_identity = "Body", inherits = m_WorldEntity)
+
 m_DegreeOfFreedom = mapper_registry.map_imperatively(semantic_world.world.DegreeOfFreedom, t_DegreeOfFreedom, properties = dict(name=relationship('PrefixedName',foreign_keys=[t_DegreeOfFreedom.c.name_id])), polymorphic_identity = "DegreeOfFreedom", inherits = m_WorldEntity)
 
-m_Primitive = mapper_registry.map_imperatively(semantic_world.geometry.Primitive, t_Primitive, properties = dict(color=relationship('Color',foreign_keys=[t_Primitive.c.color_id])), polymorphic_identity = "Primitive", inherits = m_Shape)
+m_Cylinder = mapper_registry.map_imperatively(semantic_world.geometry.Cylinder, t_Cylinder, polymorphic_identity = "Cylinder", inherits = m_Primitive)
 
-m_Mesh = mapper_registry.map_imperatively(semantic_world.geometry.Mesh, t_Mesh, properties = dict(scale=relationship('Scale',foreign_keys=[t_Mesh.c.scale_id])), polymorphic_identity = "Mesh", inherits = m_Shape)
+m_Box = mapper_registry.map_imperatively(semantic_world.geometry.Box, t_Box, properties = dict(scale=relationship('Scale',foreign_keys=[t_Box.c.scale_id])), polymorphic_identity = "Box", inherits = m_Primitive)
+
+m_Sphere = mapper_registry.map_imperatively(semantic_world.geometry.Sphere, t_Sphere, polymorphic_identity = "Sphere", inherits = m_Primitive)
 
 m_PassiveConnection = mapper_registry.map_imperatively(semantic_world.connections.PassiveConnection, t_PassiveConnection, properties = dict(passive_dofs=relationship('DegreeOfFreedom',foreign_keys=[t_DegreeOfFreedom.c.passiveconnection_passive_dofs_id])), polymorphic_identity = "PassiveConnection", inherits = m_Connection)
 
 m_ActiveConnection = mapper_registry.map_imperatively(semantic_world.connections.ActiveConnection, t_ActiveConnection, properties = dict(active_dofs=relationship('DegreeOfFreedom',foreign_keys=[t_DegreeOfFreedom.c.activeconnection_active_dofs_id])), polymorphic_identity = "ActiveConnection", inherits = m_Connection)
 
 m_FixedConnection = mapper_registry.map_imperatively(semantic_world.connections.FixedConnection, t_FixedConnection, polymorphic_identity = "FixedConnection", inherits = m_Connection)
-
-m_Box = mapper_registry.map_imperatively(semantic_world.geometry.Box, t_Box, properties = dict(scale=relationship('Scale',foreign_keys=[t_Box.c.scale_id])), polymorphic_identity = "Box", inherits = m_Primitive)
-
-m_Cylinder = mapper_registry.map_imperatively(semantic_world.geometry.Cylinder, t_Cylinder, polymorphic_identity = "Cylinder", inherits = m_Primitive)
-
-m_Sphere = mapper_registry.map_imperatively(semantic_world.geometry.Sphere, t_Sphere, polymorphic_identity = "Sphere", inherits = m_Primitive)
 
 m_Connection6DoF = mapper_registry.map_imperatively(semantic_world.connections.Connection6DoF, t_Connection6DoF, properties = dict(x=relationship('DegreeOfFreedom',foreign_keys=[t_Connection6DoF.c.x_id]), 
 y=relationship('DegreeOfFreedom',foreign_keys=[t_Connection6DoF.c.y_id]), 
