@@ -125,7 +125,7 @@ class TestSymbol:
         assert isinstance(e, cas.Expression)
         e = s <= s
         assert isinstance(e, cas.Expression)
-        e = s == s
+        e = cas.equal(s, s)
         assert isinstance(e, cas.Expression)
 
     def test_logic(self):

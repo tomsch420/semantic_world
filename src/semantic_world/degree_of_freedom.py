@@ -39,11 +39,6 @@ class DegreeOfFreedom(WorldEntity):
     Temporary lower and upper bound overwrites
     """
 
-    state_idx: int = field(default=None, init=False)
-    """
-    Index of this variable in the world state
-    """
-
     _derivative_symbols: Dict[Derivatives, cas.Symbol] = field(default_factory=dict, init=False)
     """
     Symbolic representations for each derivative
@@ -52,13 +47,11 @@ class DegreeOfFreedom(WorldEntity):
     def __post_init__(self):
         self._lower_limits = self._lower_limits or defaultdict(lambda: None)
         self._upper_limits = self._upper_limits or defaultdict(lambda: None)
-        self.state_idx = len(self._world.degrees_of_freedom)
 
-        # Register symbols for all derivatives in one loop
         for derivative in Derivatives.range(Derivatives.position, Derivatives.jerk):
-            s = cas.Symbol(f'{self.name}_{derivative}')
+            s = symbol_manager.register_symbol_provider(f'{self.name}_{derivative}',
+                                                    lambda d=derivative: self._world.state[self.name][d])
             self._derivative_symbols[derivative] = s
-            symbol_manager.register_symbol(s, lambda d=derivative: self._world.state[d, self.state_idx])
 
     @property
     def position_symbol(self) -> cas.Symbol:

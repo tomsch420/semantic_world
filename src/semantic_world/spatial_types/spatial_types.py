@@ -31,7 +31,7 @@ class StackedCompiledFunction:
     def __init__(self, expressions, parameters=None, additional_views=None):
         combined_expression = vstack(expressions)
         self.compiled_f = combined_expression.compile(parameters=parameters)
-        self.str_params = self.compiled_f.str_parameters
+        self.symbol_parameters = self.compiled_f.symbol_parameters
         slices = []
         start = 0
         for expression in expressions[:-1]:
@@ -43,8 +43,8 @@ class StackedCompiledFunction:
             for expression_slice in additional_views:
                 self.split_out_view.append(self.compiled_f.out[expression_slice])
 
-    def fast_call(self, filtered_args):
-        self.compiled_f.fast_call(filtered_args)
+    def fast_call(self, *args):
+        self.compiled_f.fast_call(*args)
         return self.split_out_view
 
 
@@ -53,16 +53,22 @@ class CompiledFunction:
         from scipy import sparse as sp
 
         self.sparse = sparse
-        if len(expression) == 0:
-            self.sparse = False
         if parameters is None:
             parameters = expression.free_symbols()
+        if parameters and not isinstance(parameters[0], list):
+            parameters = [parameters]
 
-        self.str_parameters = [str(x) for x in parameters]
         self.symbol_parameters = parameters
-        if len(parameters) > 0:
-            parameters = [Expression(parameters).s]
 
+        if len(parameters) > 0:
+            parameters = [Expression(p).s for p in parameters]
+
+        if len(expression) == 0:
+            if self.sparse:
+                result = sp.csc_matrix(np.empty(expression.shape))
+                self.__call__ = lambda **kwargs: result
+                self.fast_call = lambda *args: result
+                return
         if self.sparse:
             expression.s = ca.sparsify(expression.s)
             try:
@@ -71,7 +77,8 @@ class CompiledFunction:
                 self.compiled_casadi_function = ca.Function('f', parameters, expression.s)
             self.function_buffer, self.function_evaluator = self.compiled_casadi_function.buffer()
             self.csc_indices, self.csc_indptr = expression.s.sparsity().get_ccs()
-            self.out = sp.csc_matrix((np.zeros(expression.s.nnz()), self.csc_indptr, self.csc_indices))
+            self.out = sp.csc_matrix((np.zeros(expression.s.nnz()), self.csc_indptr, self.csc_indices),
+                                     shape=expression.shape)
             self.function_buffer.set_res(0, memoryview(self.out.data))
         else:
             try:
@@ -85,25 +92,29 @@ class CompiledFunction:
                 shape = expression.shape
             self.out = np.zeros(shape, order='F')
             self.function_buffer.set_res(0, memoryview(self.out))
-        if len(self.str_parameters) == 0:
+        if len(self.symbol_parameters) == 0:
             self.function_evaluator()
             if self.sparse:
                 result = self.out.toarray()
             else:
                 result = self.out
             self.__call__ = lambda **kwargs: result
-            self.fast_call = lambda filtered_args: result
+            self.fast_call = lambda *args: result
 
     def __call__(self, **kwargs):
-        filtered_args = [kwargs[k] for k in self.str_parameters]
-        filtered_args = np.array(filtered_args, dtype=float)
+        args = []
+        for params in self.symbol_parameters:
+            for param in params:
+                args.append(kwargs[str(param)])
+        filtered_args = np.array(args, dtype=float)
         return self.fast_call(filtered_args)
 
-    def fast_call(self, filtered_args):
+    def fast_call(self, *args):
         """
-        :param filtered_args: parameter values in the same order as in self.str_params
+        :param args: parameter values in the same order as was used during the creation
         """
-        self.function_buffer.set_arg(0, memoryview(filtered_args))
+        for arg_idx, arg in enumerate(args):
+            self.function_buffer.set_arg(arg_idx, memoryview(arg))
         self.function_evaluator()
         return self.out
 
@@ -166,8 +177,19 @@ class Symbol_:
 
 
 class Symbol(Symbol_):
-    def __init__(self, name: str):
-        self.s: ca.SX = ca.SX.sym(name)
+    _registry = {}
+
+    def __new__(cls, name: str):
+        """
+        Multiton design pattern prevents two symbol instances with the same name.
+        """
+        if name in cls._registry:
+            return cls._registry[name]
+        instance = super().__new__(cls)
+        instance.s = ca.SX.sym(name)
+        instance.name = name
+        cls._registry[name] = instance
+        return instance
 
     def __add__(self, other):
         if isinstance(other, (int, float)):
@@ -280,14 +302,10 @@ class Symbol(Symbol_):
         return Expression(self.s.__ge__(other))
 
     def __eq__(self, other):
-        if isinstance(other, Symbol_):
-            other = other.s
-        return Expression(self.s.__eq__(other))
+        return hash(self) == hash(other)
 
     def __ne__(self, other):
-        if isinstance(other, Symbol_):
-            other = other.s
-        return Expression(self.s.__ne__(other))
+        return hash(self) != hash(other)
 
     def __neg__(self):
         return Expression(self.s.__neg__())
@@ -320,7 +338,7 @@ class Symbol(Symbol_):
         raise _operation_type_error(other, '**', self)
 
     def __hash__(self):
-        return self.s.__hash__()
+        return hash(self.name)
 
 
 class Expression(Symbol_):
@@ -609,6 +627,12 @@ class TransformationMatrix(Symbol_, ReferenceFrameMixin):
                 return result
         raise _operation_type_error(self, 'dot', other)
 
+    def __matmul__(self, other):
+        return self.dot(other)
+
+    def __rmatmul__(self, other):
+        return other.dot(self)
+
     def inverse(self):
         inv = TransformationMatrix(child_frame=self.reference_frame, reference_frame=self.child_frame)
         inv[:3, :3] = self[:3, :3].T
@@ -737,6 +761,15 @@ class RotationMatrix(Symbol_, ReferenceFrameMixin):
     def from_quaternion(cls, q):
         return cls.__quaternion_to_rotation_matrix(q)
 
+    def x_vector(self):
+        return Vector3(self[:4, 3:], reference_frame=self.reference_frame)
+
+    def y_vector(self):
+        return Vector3(self[:4, 3:], reference_frame=self.reference_frame)
+
+    def z_vector(self):
+        return Vector3(self[:4, 3:], reference_frame=self.reference_frame)
+
     def dot(self, other):
         if isinstance(other, (Vector3, Point3, RotationMatrix, TransformationMatrix)):
             result = ca.mtimes(self.s, other.s)
@@ -751,6 +784,12 @@ class RotationMatrix(Symbol_, ReferenceFrameMixin):
             result.reference_frame = self.reference_frame
             return result
         raise _operation_type_error(self, 'dot', other)
+
+    def __matmul__(self, other):
+        return self.dot(other)
+
+    def __rmatmul__(self, other):
+        return other.dot(self)
 
     def to_axis_angle(self):
         return self.to_quaternion().to_axis_angle()
@@ -1389,9 +1428,52 @@ def diag(args):
         return Expression(ca.diag(Expression(args).s))
 
 
+def hessian(expression, symbols):
+    expressions = _to_sx(expression)
+    return Expression(ca.hessian(expressions, Expression(symbols).s)[0])
+
+
+def manipulability_dot(expressions):
+    symbols = expressions.free_symbols()
+    expressions = _to_sx(expressions)
+    J = jacobian(expressions, symbols)
+    JJT = J.dot(J.T)
+    m = sqrt(det(JJT))
+    nJv = ca.vec(ca.inv(_to_sx(J.dot(J.T))))
+    Hs = defaultdict(list)
+    for e_i in range(expressions.shape[0]):
+        H_columns = ca.vertsplit(hessian(expressions[0], symbols).s)
+        for s_i, s in enumerate(symbols):
+            Hs[s].append(H_columns[s_i])
+    Hs_stacked = {}
+    for s, H in Hs.items():
+        Hs_stacked[s] = vstack(H)
+    md = {}
+    for s_i, s in enumerate(symbols):
+        md[s] = m * Expression(ca.mtimes(ca.vec(_to_sx(J.dot(Hs_stacked[s].T).T)).T, nJv))
+    return md
+
+
 def jacobian(expressions, symbols):
     expressions = Expression(expressions)
     return Expression(ca.jacobian(expressions.s, Expression(symbols).s))
+
+
+def jacobian_with_dict(expressions, symbols):
+    J = []
+    for e in expressions:
+        if isinstance(e, Expression):
+            ed = Expression(ca.jacobian(e.s, Expression(symbols).s))
+        else:
+            ed = []
+            for s in symbols:
+                try:
+                    ed.append(e[s])
+                except KeyError:
+                    ed.append(0)
+            ed = Expression(ed).T
+        J.append(ed)
+    return vstack(J)
 
 
 def jacobian_dot(expressions, symbols, symbols_dot):
@@ -1419,10 +1501,12 @@ def equivalent(expression1, expression2):
 
 def free_symbols(expression):
     expression = _to_sx(expression)
-    return ca.symvar(expression)
+    return [Symbol._registry[str(s)] for s in ca.symvar(expression)]
 
 
 def create_symbols(names):
+    if isinstance(names, int):
+        names = [f's_{i}' for i in range(names)]
     return [Symbol(x) for x in names]
 
 
@@ -1865,13 +1949,13 @@ def trace(matrix):
 def vstack(list_of_matrices):
     if len(list_of_matrices) == 0:
         return Expression()
-    return Expression(ca.vertcat(*[x.s for x in list_of_matrices]))
+    return Expression(ca.vertcat(*[_to_sx(x) for x in list_of_matrices]))
 
 
 def hstack(list_of_matrices):
     if len(list_of_matrices) == 0:
         return Expression()
-    return Expression(ca.horzcat(*[x.s for x in list_of_matrices]))
+    return Expression(ca.horzcat(*[_to_sx(x) for x in list_of_matrices]))
 
 
 def diag_stack(list_of_matrices):
@@ -2144,6 +2228,23 @@ def project_to_cone(frame_V_current, frame_V_cone_axis, cone_theta):
     return if_greater_eq(a=beta, b=norm_v * np.cos(cone_theta),
                          if_result=frame_V_current,
                          else_result=project_on_cone_boundary)
+
+
+def project_to_plane(frame_V_plane_vector1, frame_V_plane_vector2, frame_P_point):
+    """
+    Projects a point onto a plane defined by two vectors.
+    This function assumes that all parameters are defined with respect to the same reference frame.
+
+    :param frame_V_plane_vector1: First vector defining the plane
+    :param frame_V_plane_vector2: Second vector defining the plane
+    :param frame_P_point: Point to project onto the plane
+    :return: The projected point on the plane
+    """
+    normal = cross(frame_V_plane_vector1, frame_V_plane_vector2)
+    normal.scale(1)
+    d = normal.dot(frame_P_point)
+    projection = frame_P_point - normal * d
+    return Point3(projection, reference_frame=frame_P_point.reference_frame)
 
 
 def angle_between_vector(v1, v2):

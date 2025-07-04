@@ -1,27 +1,33 @@
+from __future__ import absolute_import
 from __future__ import annotations
 
+import logging
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import IntEnum
 from functools import wraps, lru_cache
 from typing import Dict, Tuple, OrderedDict, Union, Optional
 
+import daqp
+import matplotlib.pyplot as plt
 import numpy as np
 import rustworkx as rx
-import rustworkx.visualization
 import rustworkx.visit
-import matplotlib.pyplot as plt
-
+import rustworkx.visualization
 from typing_extensions import List
 
-from .connections import HasUpdateState
+from .connections import HasUpdateState, Has1DOFState, ActiveConnection, PassiveConnection
 from .degree_of_freedom import DegreeOfFreedom
+from .ik_solver import InverseKinematicsSolver
 from .prefixed_name import PrefixedName
 from .spatial_types import spatial_types as cas
 from .spatial_types.derivatives import Derivatives
 from .spatial_types.math import inverse_frame
+from .spatial_types.symbol_manager import symbol_manager
 from .utils import IDGenerator, copy_lru_cache
 from .world_entity import Body, Connection, View
-import logging
+from .world_state import WorldState
+
 logger = logging.getLogger(__name__)
 
 id_generator = IDGenerator()
@@ -69,7 +75,7 @@ class ForwardKinematicsVisitor(rustworkx.visit.DFSVisitor):
         """
         connection = edge[2]
         map_T_parent = self.child_body_to_fk_expr[connection.parent.name]
-        self.child_body_to_fk_expr[connection.child.name] = map_T_parent.dot(connection.origin)
+        self.child_body_to_fk_expr[connection.child.name] = map_T_parent.dot(connection.origin_expression)
         self.tf[(connection.parent.name, connection.child.name)] = connection.origin_as_position_quaternion()
 
     tree_edge = connection_call
@@ -97,7 +103,7 @@ class ForwardKinematicsVisitor(rustworkx.visit.DFSVisitor):
         Clears cache and recomputes all forward kinematics. Should be called after a state update.
         """
         self.compute_forward_kinematics_np.cache_clear()
-        self.subs = self.world.state[Derivatives.position]
+        self.subs = self.world.state.positions
         self.forward_kinematics_for_all_bodies = self.compiled_all_fks.fast_call(self.subs)
 
     def compute_tf(self) -> np.ndarray:
@@ -162,7 +168,7 @@ class ResetStateContextManager:
         self.world = world
 
     def __enter__(self) -> None:
-        self.state = self.world.state.copy()
+        self.state = deepcopy(self.world.state)
 
     def __exit__(self, exc_type: Optional[type], exc_val: Optional[Exception], exc_tb: Optional[type]) -> None:
         if exc_type is None:
@@ -198,6 +204,7 @@ def modifies_world(func):
     """
     Decorator that marks a method as a modification to the state or model of a world.
     """
+
     @wraps(func)
     def wrapper(self: World, *args, **kwargs):
         with self.modify_world() as context_manager:
@@ -230,7 +237,7 @@ class World:
 
     degrees_of_freedom: Dict[PrefixedName, DegreeOfFreedom] = field(default_factory=dict)
 
-    state: np.ndarray = field(default_factory=lambda: np.empty((4, 0), dtype=float))
+    state: WorldState = field(default_factory=WorldState)
     """
     2d array where rows are derivatives and columns are dof values for that derivative.
     """
@@ -267,7 +274,6 @@ class World:
         else:
             raise ValueError(f"No root found.")
 
-
     def __hash__(self):
         return hash(id(self))
 
@@ -299,8 +305,7 @@ class World:
         upper_limit = dof.get_upper_limit(derivative=Derivatives.position)
         if upper_limit is not None:
             initial_position = min(upper_limit, initial_position)
-        full_initial_state = np.array([initial_position, 0, 0, 0], dtype=float).reshape((4, 1))
-        self.state = np.hstack((self.state, full_initial_state))
+        self.state[name].position = initial_position
         self.degrees_of_freedom[name] = dof
         return dof
 
@@ -421,10 +426,12 @@ class World:
         :return: None
         """
         for dof in other.degrees_of_freedom.values():
-            dof.state_idx += len(self.degrees_of_freedom)
+            self.state[dof.name].position = other.state[dof.name].position
+            self.state[dof.name].velocity = other.state[dof.name].velocity
+            self.state[dof.name].acceleration = other.state[dof.name].acceleration
+            self.state[dof.name].jerk = other.state[dof.name].jerk
             dof._world = self
         self.degrees_of_freedom.update(other.degrees_of_freedom)
-        self.state = np.hstack((self.state, other.state))
 
         # do not trigger computations in other
         other.world_is_being_modified = True
@@ -527,6 +534,7 @@ class World:
             return [], [root], []
         root_chain = self.compute_chain_of_bodies(self.root, root)
         tip_chain = self.compute_chain_of_bodies(self.root, tip)
+        i = 0
         for i in range(min(len(root_chain), len(tip_chain))):
             if root_chain[i] != tip_chain[i]:
                 break
@@ -615,8 +623,8 @@ class World:
 
         pos = self.bfs_layout(scale=scale, align=align)
 
-
-        rustworkx.visualization.mpl_draw(self.kinematic_structure, pos=pos, labels=lambda body: str(body.name), with_labels=True,
+        rustworkx.visualization.mpl_draw(self.kinematic_structure, pos=pos, labels=lambda body: str(body.name),
+                                         with_labels=True,
                                          edge_labels=lambda edge: edge.__class__.__name__)
 
         plt.title("World Kinematic Structure")
@@ -658,10 +666,10 @@ class World:
         root_chain, tip_chain = self.compute_split_chain_of_connections(root, tip)
         connection: Connection
         for connection in root_chain:
-            tip_T_root = connection.origin.inverse()
+            tip_T_root = connection.origin_expression.inverse()
             fk = fk.dot(tip_T_root)
         for connection in tip_chain:
-            fk = fk.dot(connection.origin)
+            fk = fk.dot(connection.origin_expression)
         fk.reference_frame = root.name
         fk.child_frame = tip.name
         return fk
@@ -677,7 +685,34 @@ class World:
         :param tip: Tip body to which the kinematics are computed.
         :return: Transformation matrix representing the relative pose of the tip body with respect to the root body.
         """
-        return self._fk_computer.compute_forward_kinematics_np(root, tip)
+        return self._fk_computer.compute_forward_kinematics_np(root, tip).copy()
+
+    def find_dofs_for_position_symbols(self, symbols: List[cas.Symbol]) -> List[DegreeOfFreedom]:
+        result = []
+        for s in symbols:
+            for dof in self.degrees_of_freedom.values():
+                if s == dof.position_symbol:
+                    result.append(dof)
+        return result
+
+    def compute_inverse_kinematics(self, root: Body, tip: Body, target: np.ndarray,
+                                   dt: float = 0.05, max_iterations: int = 200,
+                                   translation_velocity: float = 0.2, rotation_velocity: float = 0.2) \
+            -> Dict[DegreeOfFreedom, float]:
+        """
+        Compute inverse kinematics using quadratic programming.
+
+        :param root: Root body of the kinematic chain
+        :param tip: Tip body of the kinematic chain
+        :param target: Desired tip pose relative to the root body
+        :param dt: Time step for integration
+        :param max_iterations: Maximum number of iterations
+        :param translation_velocity: Maximum translation velocity
+        :param rotation_velocity: Maximum rotation velocity
+        :return: Dictionary mapping DOF names to their computed positions
+        """
+        ik_solver = InverseKinematicsSolver(self)
+        return ik_solver.solve(root, tip, target, dt, max_iterations, translation_velocity, rotation_velocity)
 
     def apply_control_commands(self, commands: np.ndarray, dt: float, derivative: Derivatives) -> None:
         """
@@ -696,11 +731,16 @@ class World:
             raise ValueError(
                 f"Commands length {len(commands)} does not match number of free variables {len(self.degrees_of_freedom)}")
 
-        self.state[derivative] = commands
+        self.state.set_derivative(derivative, commands)
 
         for i in range(derivative - 1, -1, -1):
-            self.state[i] += self.state[i + 1] * dt
+            self.state.set_derivative(i, self.state.get_derivative(i) + self.state.get_derivative(i + 1) * dt)
         for connection in self.connections:
             if isinstance(connection, HasUpdateState):
                 connection.update_state(dt)
+        self.notify_state_change()
+
+    def set_positions_1DOF_connection(self, new_state: Dict[Has1DOFState, float]) -> None:
+        for connection, value in new_state.items():
+            connection.position = value
         self.notify_state_change()

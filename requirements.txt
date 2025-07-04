@@ -13,3 +13,4 @@ sqlacodegen
 ripple_down_rules
 pytest-order
 sqlalchemy
+daqp
