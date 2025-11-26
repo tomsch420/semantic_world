@@ -6,9 +6,7 @@ import prior
 import tqdm
 from krrood.entity_query_language.symbol_graph import SymbolGraph
 from krrood.ormatic.dao import to_dao, ToDAOState
-from krrood.ormatic.utils import classes_of_module, drop_database
-from krrood.utils import recursive_subclasses
-from sqlalchemy import create_engine
+from krrood.ormatic.utils import classes_of_module, drop_database, create_engine
 from sqlalchemy.orm import Session
 
 import semantic_digital_twin.adapters.procthor.procthor_semantic_annotations
@@ -16,9 +14,8 @@ from semantic_digital_twin.adapters.procthor.procthor_parser import ProcTHORPars
 from semantic_digital_twin.adapters.procthor.procthor_semantic_annotations import (
     ProcthorResolver,
 )
-from semantic_digital_twin.semantic_annotations.mixins import HasBody
-from semantic_digital_twin.reasoning.predicates import InsideOf
 from semantic_digital_twin.orm.ormatic_interface import *
+from semantic_digital_twin.reasoning.predicates import InsideOf
 from semantic_digital_twin.world_description.world_entity import SemanticAnnotation
 
 
@@ -33,8 +30,8 @@ def parse_procthor_worlds_and_calculate_containment_ratio():
     procthor_experiments_engine = create_engine(
         procthor_experiments_database_uri, echo=False
     )
-    # drop_database(procthor_experiments_engine)
-    # Base.metadata.create_all(procthor_experiments_engine)
+    drop_database(procthor_experiments_engine)
+    Base.metadata.create_all(procthor_experiments_engine)
     procthor_experiments_session = Session(procthor_experiments_engine)
 
     dataset = prior.load_dataset("procthor-10k")
@@ -43,8 +40,8 @@ def parse_procthor_worlds_and_calculate_containment_ratio():
     for index, house in enumerate(
         tqdm.tqdm(dataset["train"], desc="Parsing Procthor worlds")
     ):
-        if index < 5058:
-            continue
+        # if index < 5058:
+        #     continue
         try:
             parser = ProcTHORParser(f"house_{index}", house, semantic_world_session)
             world = parser.parse()

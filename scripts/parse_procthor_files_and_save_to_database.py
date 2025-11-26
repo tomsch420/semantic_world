@@ -1,20 +1,17 @@
 from __future__ import annotations
 
 import os
-import re
 import time
-from typing import List
 
 import tqdm
 from krrood.entity_query_language.symbol_graph import SymbolGraph
 from krrood.ormatic.dao import to_dao
-from krrood.ormatic.utils import drop_database
+from krrood.ormatic.utils import drop_database, create_engine
 from krrood.utils import recursive_subclasses
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from typing_extensions import TYPE_CHECKING
 
-
+from semantic_digital_twin.adapters.procthor.procthor_semantic_annotations import *  # type: ignore
+from semantic_digital_twin.semantic_annotations.mixins import HasBody
 from semantic_digital_twin.world import World
 
 sg = SymbolGraph()
@@ -25,10 +22,6 @@ from semantic_digital_twin.adapters.procthor.procthor_pipelines import (
     dresser_factory_from_body,
 )
 from semantic_digital_twin.orm.ormatic_interface import *
-from semantic_digital_twin.adapters.procthor.procthor_semantic_annotations import (
-    ProcthorResolver,
-    HouseholdObject,
-)
 from semantic_digital_twin.adapters.procthor.procthor_semantic_annotations import (
     ProcthorResolver,
 )
