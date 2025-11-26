@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import inspect
 import logging
-from copy import deepcopy
+from copy import deepcopy, copy
 from dataclasses import dataclass, field
 from enum import IntEnum
 from functools import wraps, lru_cache, cached_property
@@ -13,8 +13,8 @@ import numpy as np
 import rustworkx as rx
 import rustworkx.visit
 import rustworkx.visualization
+from krrood.adapters.json_serializer import SubclassJSONSerializer
 from lxml import etree
-from random_events.utils import SubclassJSONSerializer
 from rustworkx import NoEdgeBetweenNodes
 from typing_extensions import (
     Dict,
@@ -29,6 +29,7 @@ from typing_extensions import (
 from typing_extensions import List
 from typing_extensions import Type, Set
 
+from .adapters.world_entity_kwargs_tracker import KinematicStructureEntityKwargsTracker
 from .callbacks.callback import ModelChangeCallback
 from .collision_checking.collision_detector import CollisionDetector
 from .collision_checking.trimesh_collision_detector import TrimeshCollisionDetector
@@ -798,6 +799,23 @@ class World:
         except WorldEntityNotFoundError:
             self._add_semantic_annotation(semantic_annotation)
 
+    def add_semantic_annotations(
+        self,
+        semantic_annotations: List[SemanticAnnotation],
+        skip_duplicates: bool = False,
+    ) -> None:
+        """
+        Adds a list of semantic annotations to the current list of semantic annotations if they don't already exist. Ensures
+        that each `semantic_annotation` is associated with the current instance and maintains the
+        integrity of unique semantic annotation names.
+        :param semantic_annotations: The list of semantic annotations to be added.
+        :param skip_duplicates: Whether to raise an error or not when a semantic annotation already exists.
+        """
+        for semantic_annotation in semantic_annotations:
+            self.add_semantic_annotation(
+                semantic_annotation, skip_duplicates=skip_duplicates
+            )
+
     @atomic_world_modification(modification=AddSemanticAnnotationModification)
     def _add_semantic_annotation(self, semantic_annotation: SemanticAnnotation):
         """
@@ -877,6 +895,7 @@ class World:
             logger.debug("Trying to remove a dof that is not part of this world.")
             return
         self._remove_degree_of_freedom(dof)
+        self.get_degree_of_freedom_by_name.cache_clear()
 
     @atomic_world_modification(modification=RemoveDegreeOfFreedomModification)
     def _remove_degree_of_freedom(self, dof: DegreeOfFreedom) -> None:
@@ -1264,7 +1283,7 @@ class World:
         if isinstance(new_connection, Connection6DoF):
             new_connection.origin = new_parent_T_root
 
-    def copy_subgraph_to_new_world(self, new_root: KinematicStructureEntity) -> World:
+    def move_branch_to_new_world(self, new_root: KinematicStructureEntity) -> World:
         """
         Copies the subgraph of the kinematic structure from the root body to a new world and removes it from the old world.
 
@@ -1275,21 +1294,34 @@ class World:
         child_bodies = self.compute_descendent_child_kinematic_structure_entities(
             new_root
         )
+        root_connection = new_root.parent_connection
+
+        if not child_bodies:
+            with self.modify_world(), new_world.modify_world():
+                self.remove_connection(root_connection)
+                self.remove_kinematic_structure_entity(new_root)
+
+                new_world.add_kinematic_structure_entity(new_root)
+                return new_world
+
         child_body_parent_connections = [
             body.parent_connection for body in child_bodies
         ]
+        child_body_dofs = [
+            dof
+            for connection in child_body_parent_connections
+            for dof in connection.dofs
+        ]
 
         with self.modify_world(), new_world.modify_world():
-            self.remove_kinematic_structure_entity(new_root)
-            new_world.add_kinematic_structure_entity(new_root)
-
-            for body in child_bodies:
-                self.remove_kinematic_structure_entity(body)
-                new_world.add_kinematic_structure_entity(body)
-
+            for dof in child_body_dofs:
+                self.remove_degree_of_freedom(dof)
+                new_world.add_degree_of_freedom(dof)
             for connection in child_body_parent_connections:
-                self.remove_connection(connection)
+                self.remove_kinematic_structure_entity(connection.parent)
+                self.remove_kinematic_structure_entity(connection.child)
                 new_world.add_connection(connection)
+            self.remove_connection(root_connection)
 
         return new_world
 
@@ -1305,7 +1337,7 @@ class World:
 
     def _notify_model_change(self) -> None:
         """
-        Notifies the system of a model change and updates necessary states, caches,
+        Notifies the system of a model change and updates the necessary states, caches,
         and forward kinematics expressions while also triggering registered callbacks
         for model changes.
         """
@@ -1473,8 +1505,8 @@ class World:
         root_chain, common_ancestor, tip_chain = (
             self.compute_split_chain_of_kinematic_structure_entities(root, tip)
         )
-        root_chain.append(common_ancestor[0])
-        tip_chain.insert(0, common_ancestor[0])
+        root_chain = root_chain + [common_ancestor[0]]
+        tip_chain = [common_ancestor[0]] + tip_chain
 
         root_connections = [
             self.get_connection(root_chain[i + 1], root_chain[i])
@@ -1607,6 +1639,18 @@ class World:
         :return: Transformation matrix representing the relative pose of the tip KinematicStructureEntity with respect to the root KinematicStructureEntity.
         """
         return self._forward_kinematic_manager.compute(root, tip)
+
+    def compose_forward_kinematics_expression(
+        self, root: KinematicStructureEntity, tip: KinematicStructureEntity
+    ) -> cas.TransformationMatrix:
+        """
+        :param root: The root KinematicStructureEntity in the kinematic chain.
+            It determines the starting point of the forward kinematics calculation.
+        :param tip: The tip KinematicStructureEntity in the kinematic chain.
+            It determines the endpoint of the forward kinematics calculation.
+        :return: An expression representing the computed forward kinematics of the tip KinematicStructureEntity relative to the root KinematicStructureEntity.
+        """
+        return self._forward_kinematic_manager.compose_expression(root, tip)
 
     def compute_forward_kinematics_np(
         self, root: KinematicStructureEntity, tip: KinematicStructureEntity
@@ -1745,15 +1789,7 @@ class World:
                 new_world.add_degree_of_freedom(new_dof)
                 new_world.state[dof.name] = self.state[dof.name].data
             for connection in self.connections:
-                new_connection = SubclassJSONSerializer.from_json(connection.to_json())
-                new_connection.parent = (
-                    new_world.get_kinematic_structure_entity_by_name(
-                        new_connection.parent.name
-                    )
-                )
-                new_connection.child = new_world.get_kinematic_structure_entity_by_name(
-                    new_connection.child.name
-                )
+                new_connection = connection.copy_for_world(new_world)
                 new_world.add_connection(new_connection)
         return new_world
 

@@ -1,0 +1,275 @@
+import os
+
+import numpy as np
+import pytest
+import trimesh.boolean
+from krrood.adapters.json_serializer import SubclassJSONSerializer
+
+from semantic_digital_twin.adapters.mesh import STLParser
+from semantic_digital_twin.adapters.world_entity_kwargs_tracker import (
+    KinematicStructureEntityKwargsTracker,
+)
+from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
+from semantic_digital_twin.exceptions import (
+    SpatialTypeNotJsonSerializable,
+    KinematicStructureEntityNotInKwargs,
+)
+from semantic_digital_twin.spatial_types import (
+    Point3,
+    Vector3,
+    Quaternion,
+    RotationMatrix,
+    FloatVariable,
+)
+from semantic_digital_twin.spatial_types.spatial_types import TransformationMatrix
+from semantic_digital_twin.world import World
+from semantic_digital_twin.world_description.connections import FixedConnection
+from semantic_digital_twin.world_description.geometry import Box
+from semantic_digital_twin.world_description.shape_collection import ShapeCollection
+from semantic_digital_twin.world_description.world_entity import Body
+
+
+def test_body_json_serialization():
+    body = Body(name=PrefixedName("body"))
+    collision = [Box(origin=TransformationMatrix.from_xyz_rpy(0, 1, 0, 0, 0, 1, body))]
+    body.collision = ShapeCollection(collision, reference_frame=body)
+
+    json_data = body.to_json()
+    body2 = Body.from_json(json_data)
+
+    for c1 in body.collision:
+        for c2 in body2.collision:
+            assert c1 == c2
+
+    assert (
+        body.collision.shapes[0].origin.reference_frame
+        == body2.collision.shapes[0].origin.reference_frame
+    )
+
+    assert (
+        body.collision.shapes[0].origin.child_frame
+        == body2.collision.shapes[0].origin.child_frame
+    )
+
+    assert id(body.collision.shapes[0].origin.reference_frame) != id(
+        body2.collision.shapes[0].origin.reference_frame
+    )
+
+    assert body == body2
+
+
+def test_transformation_matrix_json_serialization():
+    body = Body(name=PrefixedName("body"))
+    body2 = Body(name=PrefixedName("body2"))
+    transform = TransformationMatrix.from_xyz_rpy(
+        x=1, y=2, z=3, roll=1, pitch=2, yaw=3, reference_frame=body, child_frame=body2
+    )
+    json_data = transform.to_json()
+    kwargs = {}
+    tracker = KinematicStructureEntityKwargsTracker.from_kwargs(kwargs)
+    tracker.add_kinematic_structure_entity(body)
+    tracker.add_kinematic_structure_entity(body2)
+    transform_copy = TransformationMatrix.from_json(json_data, **kwargs)
+    assert transform.reference_frame == transform_copy.reference_frame
+    assert id(transform.reference_frame) == id(transform_copy.reference_frame)
+
+
+def test_point3_json_serialization():
+    body = Body(name=PrefixedName("body"))
+    point = Point3(1, 2, 3, reference_frame=body)
+    json_data = point.to_json()
+    kwargs = {}
+    tracker = KinematicStructureEntityKwargsTracker.from_kwargs(kwargs)
+    tracker.add_kinematic_structure_entity(body)
+    point_copy = Point3.from_json(json_data, **kwargs)
+    assert point.reference_frame == point_copy.reference_frame
+    assert id(point.reference_frame) == id(point_copy.reference_frame)
+
+
+def test_point3_json_serialization_with_expression():
+    body = Body(name=PrefixedName("body"))
+    point = Point3(FloatVariable(name=PrefixedName("muh")), reference_frame=body)
+    with pytest.raises(SpatialTypeNotJsonSerializable):
+        point.to_json()
+
+
+def test_KinematicStructureEntityNotInKwargs():
+    body = Body(name=PrefixedName("body"))
+    point = Point3(1, 2, 3, reference_frame=body)
+    json_data = point.to_json()
+    kwargs = {}
+    with pytest.raises(KinematicStructureEntityNotInKwargs):
+        Point3.from_json(json_data, **kwargs)
+
+
+def test_KinematicStructureEntityNotInKwargs2():
+    body = Body(name=PrefixedName("body"))
+    point = Point3(1, 2, 3, reference_frame=body)
+    json_data = point.to_json()
+    tracker = KinematicStructureEntityKwargsTracker.from_world(World())
+    with pytest.raises(KinematicStructureEntityNotInKwargs):
+        Point3.from_json(json_data, **tracker.create_kwargs())
+
+
+def test_vector3_json_serialization_with_expression():
+    body = Body(name=PrefixedName("body"))
+    vector = Vector3(FloatVariable(name=PrefixedName("muh")), reference_frame=body)
+    with pytest.raises(SpatialTypeNotJsonSerializable):
+        vector.to_json()
+
+
+def test_quaternion_json_serialization_with_expression():
+    body = Body(name=PrefixedName("body"))
+    quaternion = Quaternion(
+        FloatVariable(name=PrefixedName("muh")), reference_frame=body
+    )
+    with pytest.raises(SpatialTypeNotJsonSerializable):
+        quaternion.to_json()
+
+
+def test_rotation_matrix_json_serialization_with_expression():
+    body = Body(name=PrefixedName("body"))
+    rotation = RotationMatrix.from_rpy(
+        roll=FloatVariable(name=PrefixedName("muh")), reference_frame=body
+    )
+    with pytest.raises(SpatialTypeNotJsonSerializable):
+        rotation.to_json()
+
+
+def test_transformation_matrix_json_serialization_with_expression():
+    body = Body(name=PrefixedName("body"))
+    transform = TransformationMatrix.from_xyz_rpy(
+        FloatVariable(name=PrefixedName("muh")), reference_frame=body
+    )
+    with pytest.raises(SpatialTypeNotJsonSerializable):
+        transform.to_json()
+
+
+def test_vector3_json_serialization():
+    body = Body(name=PrefixedName("body"))
+    vector = Vector3(1, 2, 3, reference_frame=body)
+    json_data = vector.to_json()
+    kwargs = {}
+    tracker = KinematicStructureEntityKwargsTracker.from_kwargs(kwargs)
+    tracker.add_kinematic_structure_entity(body)
+    vector_copy = Vector3.from_json(json_data, **kwargs)
+    assert vector.reference_frame == vector_copy.reference_frame
+    assert id(vector.reference_frame) == id(vector_copy.reference_frame)
+
+
+def test_quaternion_json_serialization():
+    body = Body(name=PrefixedName("body"))
+    quaternion = Quaternion(1, 0, 0, 0, reference_frame=body)
+    json_data = quaternion.to_json()
+    kwargs = {}
+    tracker = KinematicStructureEntityKwargsTracker.from_kwargs(kwargs)
+    tracker.add_kinematic_structure_entity(body)
+    quaternion_copy = Quaternion.from_json(json_data, **kwargs)
+    assert quaternion.reference_frame == quaternion_copy.reference_frame
+    assert id(quaternion.reference_frame) == id(quaternion_copy.reference_frame)
+
+
+def test_rotation_matrix_json_serialization():
+    body = Body(name=PrefixedName("body"))
+    rotation = RotationMatrix.from_rpy(roll=1, pitch=2, yaw=3, reference_frame=body)
+    json_data = rotation.to_json()
+    kwargs = {}
+    tracker = KinematicStructureEntityKwargsTracker.from_kwargs(kwargs)
+    tracker.add_kinematic_structure_entity(body)
+    rotation_copy = RotationMatrix.from_json(json_data, **kwargs)
+    assert rotation.reference_frame == rotation_copy.reference_frame
+    assert id(rotation.reference_frame) == id(rotation_copy.reference_frame)
+
+
+def test_connection_json_serialization_with_world():
+    world = World()
+    body = Body(name=PrefixedName("body"))
+    body2 = Body(name=PrefixedName("body2"))
+    with world.modify_world():
+        world.add_kinematic_structure_entity(body)
+        world.add_kinematic_structure_entity(body2)
+        c = FixedConnection(
+            parent=body,
+            child=body2,
+            parent_T_connection_expression=TransformationMatrix.from_xyz_rpy(
+                x=1, roll=2, reference_frame=body, child_frame=body2
+            ),
+        )
+        world.add_connection(c)
+    json_data = c.to_json()
+    tracker = KinematicStructureEntityKwargsTracker.from_world(world)
+    c2 = FixedConnection.from_json(json_data, **tracker.create_kwargs())
+    assert c != c2
+    assert c.parent.name == c2.parent.name
+    assert c.child.name == c2.child.name
+    assert np.allclose(
+        c.parent_T_connection_expression.to_np(),
+        c2.parent_T_connection_expression.to_np(),
+    )
+    assert (
+        c.parent_T_connection_expression.reference_frame
+        == c2.parent_T_connection_expression.reference_frame
+    )
+    assert (
+        c.parent_T_connection_expression.child_frame
+        == c2.parent_T_connection_expression.child_frame
+    )
+
+
+def test_transformation_matrix_json_serialization_with_world_in_kwargs():
+    world = World()
+    body = Body(name=PrefixedName("body"))
+    body2 = Body(name=PrefixedName("body2"))
+    with world.modify_world():
+        world.add_kinematic_structure_entity(body)
+        world.add_kinematic_structure_entity(body2)
+        c = FixedConnection(
+            parent=body,
+            child=body2,
+            parent_T_connection_expression=TransformationMatrix.from_xyz_rpy(
+                x=1, roll=2, reference_frame=body, child_frame=body2
+            ),
+        )
+        world.add_connection(c)
+    json_data = c.to_json()
+    tracker = KinematicStructureEntityKwargsTracker.from_world(world)
+    c2 = FixedConnection.from_json(json_data, **tracker.create_kwargs())
+    assert c != c2
+    assert c.parent.name == c2.parent.name
+    assert c.child.name == c2.child.name
+    assert np.allclose(
+        c.parent_T_connection_expression.to_np(),
+        c2.parent_T_connection_expression.to_np(),
+    )
+    assert (
+        c.parent_T_connection_expression.reference_frame
+        == c2.parent_T_connection_expression.reference_frame
+    )
+    assert (
+        c.parent_T_connection_expression.child_frame
+        == c2.parent_T_connection_expression.child_frame
+    )
+
+
+def test_json_serialization_with_mesh():
+    body: Body = (
+        STLParser(
+            os.path.join(
+                os.path.dirname(__file__),
+                "..",
+                "..",
+                "resources",
+                "stl",
+                "milk.stl",
+            )
+        )
+        .parse()
+        .root
+    )
+
+    json_data = body.to_json()
+    body2 = Body.from_json(json_data)
+
+    for c1 in body.collision:
+        for c2 in body2.collision:
+            assert (trimesh.boolean.difference([c1.mesh, c2.mesh])).is_empty

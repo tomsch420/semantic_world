@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing_extensions import Dict, Any, Self, List
 
-from random_events.utils import SubclassJSONSerializer
+from krrood.adapters.json_serializer import SubclassJSONSerializer
 
 from ...datastructures.prefixed_name import PrefixedName
 from ...world_description.world_modification import (
@@ -42,7 +42,7 @@ class MetaData(SubclassJSONSerializer):
         }
 
     @classmethod
-    def _from_json(cls, data: Dict[str, Any]) -> Self:
+    def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
         return cls(
             node_name=data["node_name"],
             process_id=data["process_id"],
@@ -92,10 +92,12 @@ class WorldStateUpdate(Message):
         }
 
     @classmethod
-    def _from_json(cls, data: Dict[str, Any]) -> Self:
+    def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
         return cls(
-            meta_data=MetaData.from_json(data["meta_data"]),
-            prefixed_names=[PrefixedName.from_json(n) for n in data["prefixed_names"]],
+            meta_data=MetaData.from_json(data["meta_data"], **kwargs),
+            prefixed_names=[
+                PrefixedName.from_json(n, **kwargs) for n in data["prefixed_names"]
+            ],
             states=data["states"],
         )
 
@@ -118,10 +120,12 @@ class ModificationBlock(Message):
         }
 
     @classmethod
-    def _from_json(cls, data: Dict[str, Any]) -> Self:
+    def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
         return cls(
-            meta_data=MetaData.from_json(data["meta_data"]),
-            modifications=WorldModelModificationBlock.from_json(data["modifications"]),
+            meta_data=MetaData.from_json(data["meta_data"], **kwargs),
+            modifications=WorldModelModificationBlock.from_json(
+                data["modifications"], **kwargs
+            ),
         )
 
 
@@ -143,8 +147,54 @@ class LoadModel(Message):
         }
 
     @classmethod
-    def _from_json(cls, data: Dict[str, Any]) -> Self:
+    def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
         return cls(
-            meta_data=MetaData.from_json(data["meta_data"]),
+            meta_data=MetaData.from_json(data["meta_data"], **kwargs),
             primary_key=data["primary_key"],
+        )
+
+
+@dataclass
+class WorldModelSnapshot(SubclassJSONSerializer):
+    """
+    Snapshot containing the complete modification history and the latest world state.
+    """
+
+    modifications: List[WorldModelModificationBlock]
+    """
+    The ordered list of world model modification blocks.
+    """
+
+    prefixed_names: List[PrefixedName]
+    """
+    The names of the free variables contained in the state snapshot.
+    """
+
+    states: List[float]
+    """
+    The values of the free variables contained in the state snapshot.
+    """
+
+    def to_json(self) -> Dict[str, Any]:
+        return {
+            **super().to_json(),
+            "modifications": [m.to_json() for m in self.modifications],
+            "state": {
+                "prefixed_names": [n.to_json() for n in self.prefixed_names],
+                "states": list(self.states),
+            },
+        }
+
+    @classmethod
+    def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
+        state = data.get("state", {})
+        return cls(
+            modifications=[
+                WorldModelModificationBlock.from_json(m, **kwargs)
+                for m in data.get("modifications", [])
+            ],
+            prefixed_names=[
+                PrefixedName.from_json(n, **kwargs) for n in state.get("prefixed_names", [])
+            ],
+            states=state.get("states", []),
         )

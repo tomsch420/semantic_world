@@ -82,6 +82,7 @@ def get_visible_bodies(camera: Camera) -> List[KinematicStructureEntity]:
     seg = rt.create_segmentation_mask(
         TransformationMatrix(cam_pose, reference_frame=camera._world.root),
         resolution=256,
+        min_dist=0.2,
     )
     indices = np.unique(seg)
     indices = indices[indices > -1]
@@ -426,7 +427,7 @@ class InsideOf(SpatialRelation):
         return sum(inside) / len(inside)
 
 
-# @dataclass
+@dataclass
 class ContainsType(Predicate):
     """
     Predicate that checks if any object in the iterable is of the given type.

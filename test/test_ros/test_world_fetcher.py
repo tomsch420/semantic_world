@@ -1,13 +1,20 @@
 import json
 
+import numpy as np
 from std_srvs.srv import Trigger
 
 from semantic_digital_twin.adapters.ros.world_fetcher import (
     FetchWorldServer,
     fetch_world_from_service,
 )
+from semantic_digital_twin.adapters.world_entity_kwargs_tracker import (
+    KinematicStructureEntityKwargsTracker,
+)
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
+from semantic_digital_twin.robots.pr2 import PR2
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Handle, Door
+from semantic_digital_twin.spatial_types import TransformationMatrix
+from semantic_digital_twin.testing import pr2_world
 from semantic_digital_twin.testing import rclpy_node
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connections import Connection6DoF
@@ -63,9 +70,14 @@ def test_service_callback_success(rclpy_node):
 
     assert result.success is True
 
-    # Verify the message is valid JSON
+    tracker = KinematicStructureEntityKwargsTracker()
+    kwargs = tracker.create_kwargs()
+
+    # Verify the message is valid JSON (expects new envelope format)
+    payload = json.loads(result.message)
+    modifications_json = payload["modifications"]
     modifications_list = [
-        WorldModelModificationBlock.from_json(d) for d in json.loads(result.message)
+        WorldModelModificationBlock.from_json(d, **kwargs) for d in modifications_json
     ]
 
     assert (
@@ -107,8 +119,13 @@ def test_service_callback_with_multiple_modifications(rclpy_node):
 
     assert result.success is True
     # Verify the message is valid JSON
+
+    tracker = KinematicStructureEntityKwargsTracker.from_world(world)
+    kwargs = tracker.create_kwargs()
+    payload = json.loads(result.message)
+    modifications_json = payload["modifications"]
     modifications_list = [
-        WorldModelModificationBlock.from_json(d) for d in json.loads(result.message)
+        WorldModelModificationBlock.from_json(d, **kwargs) for d in modifications_json
     ]
     assert (
         modifications_list == world.get_world_model_manager().model_modification_blocks
@@ -118,6 +135,9 @@ def test_service_callback_with_multiple_modifications(rclpy_node):
 
 def test_world_fetching(rclpy_node):
     world = create_dummy_world()
+    world.get_body_by_name("body_2").parent_connection.origin = (
+        TransformationMatrix.from_xyz_rpy(1, 1, 1)
+    )
     fetcher = FetchWorldServer(node=rclpy_node, world=world)
 
     world2 = fetch_world_from_service(
@@ -126,6 +146,10 @@ def test_world_fetching(rclpy_node):
     assert (
         world2.get_world_model_manager().model_modification_blocks
         == world.get_world_model_manager().model_modification_blocks
+    )
+    np.testing.assert_array_almost_equal(
+        world2.get_body_by_name("body_2").global_pose.to_np(),
+        world.get_body_by_name("body_2").global_pose.to_np(),
     )
 
 
@@ -148,4 +172,17 @@ def test_semantic_annotation_modifications(rclpy_node):
 
     assert [sa.name for sa in w1.semantic_annotations] == [
         sa.name for sa in w2.semantic_annotations
+    ]
+
+
+def test_pr2_semantic_annotation(rclpy_node, pr2_world):
+    PR2.from_world(pr2_world)
+    fetcher = FetchWorldServer(node=rclpy_node, world=pr2_world)
+
+    pr2_world_copy = fetch_world_from_service(
+        rclpy_node,
+    )
+
+    assert [sa.name for sa in pr2_world.semantic_annotations] == [
+        sa.name for sa in pr2_world_copy.semantic_annotations
     ]

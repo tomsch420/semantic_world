@@ -171,7 +171,7 @@ class PR2(AbstractRobot, SpecifiesLeftRightArm, HasNeck):
             world.add_semantic_annotation(robot, skip_duplicates=True)
 
             vel_limits = defaultdict(
-                lambda: 1,
+                lambda: 1.0,
                 {
                     world.get_connection_by_name("head_tilt_joint"): 3.5,
                     world.get_connection_by_name("r_shoulder_pan_joint"): 0.15,

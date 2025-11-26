@@ -2,14 +2,17 @@ import os
 import threading
 import time
 
+import pytest
 from krrood.entity_query_language.symbol_graph import SymbolGraph
-from krrood.entity_query_language.symbolic import Variable
 from typing_extensions import Tuple
 
-import pytest
-
 from .adapters.urdf import URDFParser
+from .datastructures.prefixed_name import PrefixedName
+from .spatial_types import TransformationMatrix
+from .spatial_types.derivatives import DerivativeMap
+from .spatial_types.spatial_types import Vector3
 from .utils import rclpy_installed, tracy_installed, hsrb_installed
+from .world import World
 from .world_description.connections import (
     Connection6DoF,
     PrismaticConnection,
@@ -19,13 +22,8 @@ from .world_description.connections import (
 )
 from .world_description.degree_of_freedom import DegreeOfFreedom
 from .world_description.geometry import Box, Scale, Sphere
-from .datastructures.prefixed_name import PrefixedName
-from .spatial_types import TransformationMatrix
-from .spatial_types.derivatives import DerivativeMap
-from .spatial_types.spatial_types import Vector3
-from .world import World
 from .world_description.shape_collection import ShapeCollection
-from .world_description.world_entity import KinematicStructureEntity, Body
+from .world_description.world_entity import Body
 
 
 @pytest.fixture
@@ -285,6 +283,7 @@ def cleanup_after_test():
     yield
     # Teardown: runs after each test
     SymbolGraph().clear()
+
 
 @pytest.fixture()
 def kitchen_world():

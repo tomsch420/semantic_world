@@ -1,120 +1,49 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from functools import cached_property
+from typing import Set, Iterable, Optional
 
 import numpy as np
-import trimesh
+from krrood.entity_query_language.entity import an, entity, let
 from probabilistic_model.probabilistic_circuit.rx.helper import uniform_measure_of_event
 from typing_extensions import List
 
-from ..datastructures.prefixed_name import PrefixedName
+from .mixins import (
+    HasBody,
+    HasSupportingSurface,
+    Furniture,
+    HasRegion,
+    HasDrawers,
+    HasDoors,
+)
 from ..datastructures.variables import SpatialVariables
+from ..reasoning.predicates import InsideOf
 from ..spatial_types import Point3
 from ..world_description.shape_collection import BoundingBoxCollection
-from ..world_description.world_entity import SemanticAnnotation, Body, Region
+from ..world_description.world_entity import (
+    SemanticAnnotation,
+    Body,
+)
 
 
-############################### supporting surfaces
 @dataclass(eq=False)
-class SupportingSurface(SemanticAnnotation):
+class IsPerceivable:
     """
-    A semantic annotation that represents a supporting surface.
+    A mixin class for semantic annotations that can be perceived.
     """
 
-    @cached_property
-    def surface_region(self) -> Region:
-        """
-        Create a region that represents the object's surface.
-        """
-
-        body_exists = False
-        if hasattr(self, "body"):
-            body_exists = True
-            mesh = self.body.collision.combined_mesh
-        elif hasattr(self, "container"):
-            mesh = self.container.body.collision.combined_mesh
-        else:
-            raise ValueError(
-                "No body or container found. Cannot create surface region."
-            )
-
-        upward_threshold = 0.95
-        clearance_threshold = 0.5
-        min_surface_area = 0.0225  # 15cm x 15cm
-
-        # --- Find upward-facing faces ---
-        normals = mesh.face_normals
-        upward_mask = normals[:, 2] > upward_threshold
-
-        if not upward_mask.any():
-            raise ValueError("No upward-facing faces found.")
-
-        # --- Find connected upward-facing regions ---
-        upward_face_indices = np.nonzero(upward_mask)[0]
-        submesh_up = mesh.submesh([upward_face_indices], append=True)
-        face_groups = submesh_up.split(only_watertight=False)
-
-        # Compute total area for each group
-        large_groups = [g for g in face_groups if g.area >= min_surface_area]
-
-        if not large_groups:
-            raise ValueError(
-                "No upward-facing connected surfaces >= 15cm x 15cm found."
-            )
-
-        # --- Merge qualifying upward-facing submeshes ---
-        candidates = trimesh.util.concatenate(large_groups)
-
-        # --- Check vertical clearance using ray casting ---
-        face_centers = candidates.triangles_center
-        ray_origins = face_centers + np.array([0, 0, 0.01])  # small upward offset
-        ray_dirs = np.tile([0, 0, 1], (len(ray_origins), 1))
-
-        locations, index_ray, _ = mesh.ray.intersects_location(
-            ray_origins=ray_origins, ray_directions=ray_dirs
-        )
-
-        # Compute distances to intersections (if any)
-        distances = np.full(len(ray_origins), np.inf)
-        distances[index_ray] = np.linalg.norm(
-            locations - ray_origins[index_ray], axis=1
-        )
-
-        # Filter faces with enough space above
-        clear_mask = (distances > clearance_threshold) | np.isinf(distances)
-
-        if not clear_mask.any():
-            raise ValueError(
-                "No upward-facing surfaces with sufficient clearance found."
-            )
-
-        candidates_filtered = candidates.submesh([clear_mask], append=True)
-
-        # --- Build the region ---
-        points_3d = [
-            Point3(
-                x,
-                y,
-                z,
-                reference_frame=self.body if body_exists else self.container.body,
-            )
-            for x, y, z in candidates_filtered.vertices
-        ]
-
-        surface_region = Region.from_3d_points(
-            name=PrefixedName(f"{self.name.name}_surface_region"),
-            points_3d=points_3d,
-            reference_frame=self.body if body_exists else self.container.body,
-        )
-
-        return surface_region
+    class_label: Optional[str] = field(default=None, kw_only=True)
+    """
+    The exact class label of the perceived object.
+    """
 
 
-############################### furniture
 @dataclass(eq=False)
-class Container(SemanticAnnotation):
-    body: Body
+class Handle(HasBody): ...
+
+
+@dataclass(eq=False)
+class Container(HasBody): ...
 
 
 @dataclass(eq=False)
@@ -123,19 +52,14 @@ class Fridge(SemanticAnnotation):
     A semantic annotation representing a fridge that has a door and a body.
     """
 
-    body: Body
-    doors: List[Door] = field(default_factory=list)
+    container: Container
+    door: Door
 
 
 @dataclass(eq=False)
-class Table(SupportingSurface):
+class Table(Furniture, HasBody):
     """
     A semantic annotation that represents a table.
-    """
-
-    body: Body
-    """
-    The body that represents the table's top surface.
     """
 
     def points_on_table(self, amount: int = 100) -> List[Point3]:
@@ -158,91 +82,79 @@ class Table(SupportingSurface):
 
 
 @dataclass(eq=False)
-class Wall(SemanticAnnotation):
-    body: Body
+class Aperture(HasRegion):
     """
-    The body that represents the wall.
-    """
-
-    doors: List[Door] = field(default_factory=list)
-    """
-    The doors that are possibly in the wall.
+    A semantic annotation that represents an opening in a physical entity.
+    An example is like a hole in a wall that can be used to enter a room.
     """
 
 
 @dataclass(eq=False)
-class Handle(SemanticAnnotation):
-    body: Body
+class Door(HasBody):
     """
-    The body that the handle is attached to.
-    """
-
-
-################################
-
-
-@dataclass(eq=False)
-class Components(SemanticAnnotation): ...
-
-
-@dataclass(eq=False)
-class Furniture(SemanticAnnotation): ...
-
-
-#################### subclasses von Components
-
-
-@dataclass(eq=False)
-class Room(Components, SupportingSurface):
-    """
-    A semantic annotation that represents a closed area with a specific purpose
+    A door is a physical entity that has covers an opening, has a movable body and a handle.
     """
 
-
-@dataclass(eq=False)
-class EntryWay(Components):
-    body: Body
-
-
-@dataclass(eq=False)
-class Door(EntryWay):
     handle: Handle
+    """
+    The handle of the door.
+    """
 
 
 @dataclass(eq=False)
-class DoubleDoor(EntryWay):
-    doors: List[Door] = field(default_factory=list, hash=False)
+class DoubleDoor(SemanticAnnotation):
+    left_door: Door
+    right_door: Door
 
 
 @dataclass(eq=False)
-class Drawer(Components, SupportingSurface):
+class Drawer(SemanticAnnotation):
     container: Container
     handle: Handle
 
 
 ############################### subclasses to Furniture
 @dataclass(eq=False)
-class Cabinet(Furniture):
+class Cabinet(Furniture, HasDrawers, HasDoors):
     container: Container
-    drawers: List[Drawer] = field(default_factory=list, hash=False)
-    doors: List[Door] = field(default_factory=list)
 
 
 @dataclass(eq=False)
-class Dresser(Furniture):
-    container: Container
-    drawers: List[Drawer] = field(default_factory=list, hash=False)
-    doors: List[Door] = field(default_factory=list)
+class Dresser(Furniture, HasDrawers, HasDoors):
+    container: Container = field(kw_only=True)
 
 
 @dataclass(eq=False)
-class Cupboard(Furniture):
-    container: Container
-    doors: List[Door] = field(default_factory=list)
+class Cupboard(Furniture, HasDoors):
+    container: Container = field(kw_only=True)
 
 
 @dataclass(eq=False)
-class Wardrobe(Furniture):
-    container: Container
-    drawers: List[Drawer] = field(default_factory=list, hash=False)
-    doors: List[Door] = field(default_factory=list)
+class Wardrobe(Furniture, HasDrawers, HasDoors):
+    container: Container = field(kw_only=True)
+
+
+class Floor(HasSupportingSurface): ...
+
+
+@dataclass(eq=False)
+class Room(SemanticAnnotation):
+    """
+    A semantic annotation that represents a closed area with a specific purpose
+    """
+
+    floor: Floor
+    """
+    The room's floor.
+    """
+
+
+@dataclass(eq=False)
+class Wall(SemanticAnnotation):
+    body: Body
+
+    @property
+    def doors(self) -> Iterable[Door]:
+        door = let(Door, self._world.semantic_annotations)
+        query = an(entity(door), InsideOf(self.body, door.entry_way.region)() > 0.1)
+        return query.evaluate()

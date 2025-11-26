@@ -7,9 +7,10 @@ from typing import Dict, Tuple, Union, Set, Optional, List, Any, Self
 from pathlib import Path
 
 import numpy as np
-from krrood.entity_query_language.entity import the, entity, let, symbolic_mode
+from krrood.entity_query_language.entity import the, entity, let
 from krrood.ormatic.eql_interface import eql_to_sql
-from sqlalchemy.exc import NoResultFound
+from sqlalchemy import select
+from sqlalchemy.exc import NoResultFound, MultipleResultsFound
 from sqlalchemy.orm import Session
 
 from ...datastructures.prefixed_name import PrefixedName
@@ -764,29 +765,17 @@ def get_world_by_asset_id(session: Session, asset_id: str) -> Optional[World]:
     """
     asset_id = asset_id.lower()
     other_possible_name = "_".join(asset_id.split("_")[:-1])
-    with symbolic_mode():
 
-        expr = the(
-            entity(
-                world := let(type_=WorldMapping, domain=None),
-                world.name == asset_id,
-            )
-        )
-
-        expr2 = the(
-            entity(
-                world := let(type_=WorldMapping, domain=None),
-                world.name == other_possible_name,
-            )
-        )
-        logging.info(f"Querying name: {asset_id}")
+    expr = select(WorldMappingDAO).where(WorldMappingDAO.name == asset_id)
+    expr2 = select(WorldMappingDAO).where(WorldMappingDAO.name == other_possible_name)
+    logging.info(f"Querying name: {asset_id}")
     try:
-        world_mapping = eql_to_sql(expr, session).evaluate()
-    except NoResultFound:
+        world_mapping = session.scalars(expr).one()
+    except (NoResultFound, MultipleResultsFound):
         try:
             logging.info(f"Querying name: {other_possible_name}")
-            world_mapping = eql_to_sql(expr2, session).evaluate()
-        except NoResultFound:
+            world_mapping = session.scalars(expr2).one()
+        except (NoResultFound, MultipleResultsFound):
             world_mapping = None
             logging.warning(
                 f"Could not find world with name {asset_id} or {other_possible_name}; Skipping."

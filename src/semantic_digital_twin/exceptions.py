@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from typing_extensions import Optional, List, Type, TYPE_CHECKING, Callable, Tuple, Union
+from krrood.adapters.json_serializer import JSONSerializationError
+from typing_extensions import (
+    Optional,
+    List,
+    Type,
+    TYPE_CHECKING,
+    Callable,
+    Tuple,
+    Union,
+)
 
 from .datastructures.prefixed_name import PrefixedName
 
@@ -13,7 +22,7 @@ if TYPE_CHECKING:
         WorldEntity,
         KinematicStructureEntity,
     )
-    from .spatial_types.spatial_types import Symbol
+    from .spatial_types.spatial_types import FloatVariable, SymbolicType
 
 
 class LogicalError(Exception):
@@ -64,33 +73,6 @@ class DuplicateKinematicStructureEntityError(UsageError):
         super().__init__(msg)
 
 
-class SymbolManagerException(Exception):
-    """
-    Exceptions related to the symbol manager for special types.
-    """
-
-
-@dataclass
-class SymbolResolutionError(SymbolManagerException):
-    """
-    Represents an error that occurs when a symbol in a symbolic expression cannot be resolved.
-
-    This exception is raised when the resolution of a symbol fails due to
-    underlying exceptions or unresolved states. It provides details about
-    the symbol that caused the error and the original exception responsible
-    for the failure.
-    """
-
-    symbol: Symbol
-    original_exception: Exception
-
-    def __post_init__(self):
-        super().__init__(
-            f'Symbol "{self.symbol.name}" could not be resolved. '
-            f"({self.original_exception.__class__.__name__}: {str(self.original_exception)})"
-        )
-
-
 class SpatialTypesError(UsageError):
     pass
 
@@ -125,28 +107,41 @@ class NotSquareMatrixError(SpatialTypesError):
 
 
 @dataclass
-class HasFreeSymbolsError(SpatialTypesError):
+class HasFreeVariablesError(SpatialTypesError):
     """
-    Raised when an operation can't be performed on an expression with free symbols.
+    Raised when an operation can't be performed on an expression with free variables.
     """
 
-    symbols: List[Symbol]
+    variables: List[FloatVariable]
 
     def __post_init__(self):
-        msg = f"Operation can't be performed on expression with free symbols: {self.symbols}."
+        msg = f"Operation can't be performed on expression with free variables: {self.variables}."
+        super().__init__(msg)
+
+
+class ExpressionEvaluationError(SpatialTypesError): ...
+
+
+@dataclass
+class WrongNumberOfArgsError(ExpressionEvaluationError):
+    expected_number_of_args: int
+    actual_number_of_args: int
+
+    def __post_init__(self):
+        msg = f"Expected {self.expected_number_of_args} arguments, but got {self.actual_number_of_args}."
         super().__init__(msg)
 
 
 @dataclass
-class DuplicateSymbolsError(SpatialTypesError):
+class DuplicateVariablesError(SpatialTypesError):
     """
-    Raised when duplicate symbols are found in an operation that requires unique symbols.
+    Raised when duplicate variables are found in an operation that requires unique variables.
     """
 
-    symbols: List[Symbol]
+    variables: List[FloatVariable]
 
     def __post_init__(self):
-        msg = f"Operation failed due to duplicate symbols: {self.symbols}. All symbols must be unique."
+        msg = f"Operation failed due to duplicate variables: {self.variables}. All variables must be unique."
         super().__init__(msg)
 
 
@@ -185,3 +180,28 @@ class AlreadyBelongsToAWorldError(UsageError):
     def __post_init__(self):
         msg = f"Cannot add a {self.type_trying_to_add} that already belongs to another world {self.world.name}."
         super().__init__(msg)
+
+
+class NotJsonSerializable(JSONSerializationError): ...
+
+
+@dataclass
+class SpatialTypeNotJsonSerializable(NotJsonSerializable):
+    spatial_object: SymbolicType
+
+    def __post_init__(self):
+        super().__init__(
+            f"Object of type '{self.spatial_object.__class__.__name__}' is not JSON serializable, because it has "
+            f"free variables: {self.spatial_object.free_variables()}"
+        )
+
+
+@dataclass
+class KinematicStructureEntityNotInKwargs(JSONSerializationError):
+    kinematic_structure_entity_name: PrefixedName
+
+    def __post_init__(self):
+        super().__init__(
+            f"Kinematic structure entity '{self.kinematic_structure_entity_name}' is not in the kwargs of the "
+            f"method that created it."
+        )

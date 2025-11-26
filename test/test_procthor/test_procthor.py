@@ -16,7 +16,10 @@ from semantic_digital_twin.adapters.procthor.procthor_parser import (
     ProcthorWall,
     ProcthorObject,
 )
-from semantic_digital_twin.adapters.procthor.procthor_semantic_annotations import ProcthorResolver, Bread
+from semantic_digital_twin.adapters.procthor.procthor_semantic_annotations import (
+    ProcthorResolver,
+    Bread,
+)
 from semantic_digital_twin.spatial_types.spatial_types import TransformationMatrix
 from semantic_digital_twin.utils import get_semantic_digital_twin_directory_root
 from semantic_digital_twin.world_description.geometry import Scale

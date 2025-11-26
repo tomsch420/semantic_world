@@ -1,5 +1,3 @@
-from os.path import dirname
-
 # World Reasoner
 
 The world reasoner {py:class}`semantic_digital_twin.reasoner.WorldReasoner` is a class that uses [Ripple Down Rules](https://github.com/AbdelrhmanBassiouny/ripple_down_rules/tree/main)
@@ -22,7 +20,7 @@ world.
 For example lets say the reasoner now has rules that enable it find specific types of semantic annotations like the Drawer and the Cabinet.
 The way to use the reasoner is like the following example:
 
-```python
+```{code-cell} ipython3
 from os.path import join, dirname
 from semantic_digital_twin.reasoning.world_reasoner import WorldReasoner
 from semantic_digital_twin.adapters.urdf import URDFParser
@@ -50,7 +48,7 @@ more attributes of the world.
 
 For example, let's say you want to improve an existing rule that classifies Drawers, you can do that as follows:
 
-```python
+```{code-cell} ipython3
 from os.path import join, dirname
 from semantic_digital_twin.reasoning.world_reasoner import WorldReasoner
 from semantic_digital_twin.adapters.urdf import URDFParser
@@ -83,7 +81,7 @@ Open the Template File in Editor from the Ipython Shell.
 Now, a template file with some imports and an empty function is openned for you to write your rule inside the body of
 the function as shown bellow:
 
-```python
+```{code-cell} ipython3
 from dataclasses import dataclass, field
 from posixpath import dirname
 from typing_extensions import Any, Callable, ClassVar, Dict, List, Optional, Type, Union
@@ -103,7 +101,7 @@ def world_semantic_annotations_of_type_drawer(case: World) -> List[Drawer]:
 
 You can write a filter on the current semantic annotations of type Drawer as follows:
 
-```python
+```{code-cell} ipython3
 from dataclasses import dataclass, field
 from posixpath import dirname
 from typing_extensions import Any, Callable, ClassVar, Dict, List, Optional, Type, Union
@@ -147,7 +145,7 @@ If you also want to contribute to the semantic digital twin package, then it's b
 test file. Since there is already rules for Drawer, there would already be a test method for that. All you need to do is
 set the `update_existing_semantic_annotations` to `True` like this:
 
-```python
+```{code-cell} ipython3
 def test_drawer_semantic_annotation(self):
     self.fit_rules_for_a_semantic_annotation_in_apartment(Drawer, scenario=self.test_drawer_semantic_annotation, update_existing_semantic_annotations=True)
 ```
@@ -162,6 +160,6 @@ specific context, more tests are always welcome :D. Just make sure you set the s
 and set the world factory to the method that creates your world (if it doesn't exist create one and put it in the test 
 file).
 
-In addition you can fit the reasoner on a totaly new concept/attribute of the world instead of `semantic_annotations`, maybe `regions`
+In addition you can fit the reasoner on a totally new concept/attribute of the world instead of `semantic_annotations`, maybe `regions`
 or `predicates` , ...etc. What's great is that inside your rules you can use the semantic annotations that were classified already by
 the semantic annotations rules, and vice verse, you can add semantic annotations rules that use outputs from rules on other attributes as well.

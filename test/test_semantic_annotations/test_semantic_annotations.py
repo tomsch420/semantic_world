@@ -1,14 +1,18 @@
 import logging
 
-from krrood.entity_query_language.entity import entity, let, in_, infer
-from krrood.entity_query_language.symbolic import rule_mode
+from krrood.entity_query_language.entity import entity, let, in_, inference
 from numpy.ma.testutils import (
     assert_equal,
 )  # You could replace this with numpy's regular assert for better compatibility
 
 from semantic_digital_twin.reasoning.world_reasoner import WorldReasoner
-from semantic_digital_twin.testing import *
+from semantic_digital_twin.robots.minimal_robot import MinimalRobot
+from semantic_digital_twin.robots.pr2 import PR2
 from semantic_digital_twin.semantic_annotations.semantic_annotations import *
+from semantic_digital_twin.testing import *
+from semantic_digital_twin.world_description.world_entity import (
+    KinematicStructureEntity,
+)
 
 try:
     from ripple_down_rules.user_interface.gui import RDRCaseViewer
@@ -130,12 +134,10 @@ def test_aggregate_bodies(kitchen_world):
 
 
 def test_handle_semantic_annotation_eql(apartment_world):
-    with rule_mode():
-        body = let(
-            type_=Body,
-            domain=apartment_world.bodies
-        )
-        query = infer(entity(Handle(body=body), in_("handle", body.name.name.lower())))
+    body = let(type_=Body, domain=apartment_world.bodies)
+    query = an(
+        entity(inference(Handle)(body=body), in_("handle", body.name.name.lower()))
+    )
 
     handles = list(query.evaluate())
     assert len(handles) > 0
@@ -251,3 +253,26 @@ def test_semantic_annotation_serde_multiple(apartment_world):
     assert door == door_de2
     assert type(door.handle) == type(door_de2.handle)
     assert type(door.body) == type(door_de2.body)
+
+
+def test_minimal_robot_annotation(pr2_world):
+    urdf_dir = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "..", "resources", "urdf"
+    )
+    pr2 = os.path.join(urdf_dir, "pr2_kinematic_tree.urdf")
+    pr2_parser = URDFParser.from_file(file_path=pr2)
+    world_with_pr2 = pr2_parser.parse()
+    with world_with_pr2.modify_world():
+        MinimalRobot.from_world(world_with_pr2)
+        pr2_root = world_with_pr2.root
+        localization_body = Body(name=PrefixedName("odom_combined"))
+        world_with_pr2.add_kinematic_structure_entity(localization_body)
+        c_root_bf = OmniDrive.create_with_dofs(
+            parent=localization_body, child=pr2_root, world=world_with_pr2
+        )
+        world_with_pr2.add_connection(c_root_bf)
+
+    robot = world_with_pr2.get_semantic_annotations_by_type(MinimalRobot)[0]
+    pr2 = PR2.from_world(pr2_world)
+    assert len(robot.bodies) == len(pr2.bodies)
+    assert len(robot.connections) == len(pr2.connections)

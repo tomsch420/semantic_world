@@ -4,16 +4,14 @@ import importlib
 import os
 import weakref
 from copy import deepcopy
-from dataclasses import dataclass
 from functools import lru_cache, wraps
+from typing import List
+
 try:
     from ament_index_python import PackageNotFoundError
 except ModuleNotFoundError:
     PackageNotFoundError = None
-import trimesh
-from typing_extensions import Any, Tuple, Iterable
 from xml.etree import ElementTree as ET
-import weakref
 
 from typing_extensions import Any, Tuple
 
@@ -196,36 +194,6 @@ def get_semantic_digital_twin_directory_root(file_path: str) -> str:
     )
 
 
-@dataclass
-class VisualizeTrimesh:
-    """
-    Visualize the collision of an object in the world, based on the geometry and colors added to the scene. .
-    """
-
-    def __post_init__(self):
-        self.scene = trimesh.Scene()
-
-    def visualize(self, viewer=None, **kwargs):
-        """
-        Visualize the scene, based on the geometry and colors added to the scene.
-        :param viewer: The viewer to use for visualization.
-        """
-        self.scene.show(viewer=viewer, **kwargs)
-
-    def add_mesh(
-        self,
-        mesh: trimesh.Trimesh,
-        color: Tuple[int, int, int, int] = (255, 255, 255, 255),
-    ):
-        """
-        Add geometry to the scene.
-        :param mesh: The geometry to add.
-        :param color: The color of the geometry.
-        """
-        mesh.visual.face_colors = color
-        self.scene.add_geometry(mesh)
-
-
 def type_string_to_type(type_string: str) -> type:
     """
     Convert a string representation of a type to the actual type.
@@ -236,3 +204,18 @@ def type_string_to_type(type_string: str) -> type:
     module_path, class_name = type_string.rsplit(".", 1)
     module = importlib.import_module(module_path)
     return getattr(module, class_name)
+
+
+def camel_case_split(word: str) -> List[str]:
+    """
+    :param word: The word to split
+    :return: A set of strings where each string is a camel case split of the original word
+    """
+    result = []
+    start = 0
+    for i, c in enumerate(word[1:], 1):
+        if c.isupper():
+            result.append(word[start:i])
+            start = i
+    result.append(word[start:])
+    return result

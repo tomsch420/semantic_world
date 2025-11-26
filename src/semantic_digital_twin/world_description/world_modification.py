@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import abstractmethod, ABC
 from dataclasses import dataclass, field
 
-from random_events.utils import SubclassJSONSerializer
+from krrood.adapters.json_serializer import SubclassJSONSerializer
 from typing_extensions import (
     List,
     Dict,
@@ -14,7 +14,15 @@ from typing_extensions import (
 )
 
 from .degree_of_freedom import DegreeOfFreedom
-from .world_entity import KinematicStructureEntity, SemanticAnnotation, Connection
+from .world_entity import (
+    KinematicStructureEntity,
+    SemanticAnnotation,
+    Connection,
+    WorldEntity,
+)
+from ..adapters.world_entity_kwargs_tracker import (
+    KinematicStructureEntityKwargsTracker,
+)
 from ..datastructures.prefixed_name import PrefixedName
 
 if TYPE_CHECKING:
@@ -93,9 +101,11 @@ class AddKinematicStructureEntityModification(WorldModelModification):
         return {**super().to_json(), "body": self.kinematic_structure_entity.to_json()}
 
     @classmethod
-    def _from_json(cls, data: Dict[str, Any]) -> Self:
+    def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
         return cls(
-            kinematic_structure_entity=KinematicStructureEntity.from_json(data["body"])
+            kinematic_structure_entity=KinematicStructureEntity.from_json(
+                data["body"], **kwargs
+            )
         )
 
     def __eq__(self, other: Any) -> bool:
@@ -129,8 +139,8 @@ class RemoveBodyModification(WorldModelModification):
         return {**super().to_json(), "body_name": self.body_name.to_json()}
 
     @classmethod
-    def _from_json(cls, data: Dict[str, Any]) -> Self:
-        return cls(body_name=PrefixedName.from_json(data["body_name"]))
+    def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
+        return cls(body_name=PrefixedName.from_json(data["body_name"], **kwargs))
 
 
 @dataclass
@@ -149,12 +159,6 @@ class AddConnectionModification(WorldModelModification):
         return cls(kwargs["connection"])
 
     def apply(self, world: World):
-        self.connection.parent = world.get_kinematic_structure_entity_by_name(
-            self.connection.parent.name
-        )
-        self.connection.child = world.get_kinematic_structure_entity_by_name(
-            self.connection.child.name
-        )
         world.add_connection(self.connection)
 
     def to_json(self):
@@ -164,8 +168,8 @@ class AddConnectionModification(WorldModelModification):
         }
 
     @classmethod
-    def _from_json(cls, data: Dict[str, Any]) -> Self:
-        return cls(connection=Connection.from_json(data["connection"]))
+    def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
+        return cls(connection=Connection.from_json(data["connection"], **kwargs))
 
     def __eq__(self, other):
         return (
@@ -199,8 +203,10 @@ class RemoveConnectionModification(WorldModelModification):
         }
 
     @classmethod
-    def _from_json(cls, data: Dict[str, Any]) -> Self:
-        return cls(connection_name=PrefixedName.from_json(data["connection_name"]))
+    def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
+        return cls(
+            connection_name=PrefixedName.from_json(data["connection_name"], **kwargs)
+        )
 
 
 @dataclass
@@ -228,8 +234,8 @@ class AddDegreeOfFreedomModification(WorldModelModification):
         }
 
     @classmethod
-    def _from_json(cls, data: Dict[str, Any]) -> Self:
-        return cls(dof=DegreeOfFreedom.from_json(data["dof"]))
+    def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
+        return cls(dof=DegreeOfFreedom.from_json(data["dof"], **kwargs))
 
     def __eq__(self, other):
         return self.dof.name == other.dof.name
@@ -255,8 +261,8 @@ class RemoveDegreeOfFreedomModification(WorldModelModification):
         }
 
     @classmethod
-    def _from_json(cls, data: Dict[str, Any]) -> Self:
-        return cls(dof_name=PrefixedName.from_json(data["dof"]))
+    def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
+        return cls(dof_name=PrefixedName.from_json(data["dof"], **kwargs))
 
 
 @dataclass
@@ -277,10 +283,10 @@ class AddSemanticAnnotationModification(WorldModelModification):
         }
 
     @classmethod
-    def _from_json(cls, data: Dict[str, Any]) -> Self:
+    def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
         return cls(
             semantic_annotation=SemanticAnnotation.from_json(
-                data["semantic_annotation"]
+                data["semantic_annotation"], **kwargs
             )
         )
 
@@ -303,10 +309,10 @@ class RemoveSemanticAnnotationModification(WorldModelModification):
         }
 
     @classmethod
-    def _from_json(cls, data: Dict[str, Any]) -> Self:
+    def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
         return cls(
             semantic_annotation=SemanticAnnotation.from_json(
-                data["semantic_annotation"]
+                data["semantic_annotation"], **kwargs
             )
         )
 
@@ -334,8 +340,13 @@ class WorldModelModificationBlock(SubclassJSONSerializer):
         }
 
     @classmethod
-    def _from_json(cls, data: Dict[str, Any]) -> Self:
-        return cls([WorldModelModification.from_json(d) for d in data["modifications"]])
+    def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
+        return cls(
+            modifications=[
+                WorldModelModification.from_json(d, **kwargs)
+                for d in data["modifications"]
+            ],
+        )
 
     def __iter__(self):
         return iter(self.modifications)
@@ -379,10 +390,11 @@ class SetDofHasHardwareInterface(WorldModelModification):
         }
 
     @classmethod
-    def _from_json(cls, data: Dict[str, Any]) -> Self:
+    def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
         return cls(
             degree_of_freedom_names=[
-                PrefixedName.from_json(dof) for dof in data["degree_of_freedom_names"]
+                PrefixedName.from_json(dof, **kwargs)
+                for dof in data["degree_of_freedom_names"]
             ],
             value=data["value"],
         )

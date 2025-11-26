@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import importlib
 import inspect
+from copy import copy, deepcopy
+
 import itertools
 from abc import ABC, abstractmethod
 from collections import deque
@@ -9,17 +10,17 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from dataclasses import fields
 from functools import lru_cache
+from typing import ClassVar
 
 import numpy as np
 import trimesh
 import trimesh.boolean
-from krrood.entity_query_language.predicate import Symbol
-from random_events.utils import SubclassJSONSerializer
-from scipy.stats import geom
-from semantic_digital_twin.world_description.geometry import (
-    transformation_to_json,
-    transformation_from_json,
+from krrood.adapters.json_serializer import (
+    SubclassJSONSerializer,
+    JSON_TYPE_NAME,
 )
+from krrood.entity_query_language.predicate import Symbol
+from scipy.stats import geom
 from trimesh.proximity import closest_point, nearby_faces
 from trimesh.sample import sample_surface
 from typing_extensions import (
@@ -34,21 +35,25 @@ from typing_extensions import List, Optional, TYPE_CHECKING, Tuple
 from typing_extensions import Set
 
 from .geometry import TriangleMesh
+from .inertial_properties import Inertial
 from .shape_collection import ShapeCollection, BoundingBoxCollection
+from ..adapters.world_entity_kwargs_tracker import (
+    KinematicStructureEntityKwargsTracker,
+)
 from ..datastructures.prefixed_name import PrefixedName
 from ..exceptions import ReferenceFrameMismatchError
 from ..spatial_types import spatial_types as cas
 from ..spatial_types.spatial_types import TransformationMatrix, Expression, Point3
-from ..utils import IDGenerator, type_string_to_type
+from ..utils import IDGenerator, type_string_to_type, camel_case_split
 
 if TYPE_CHECKING:
     from ..world_description.degree_of_freedom import DegreeOfFreedom
-    from ..world import World
+    from ..world import World, GenericSemanticAnnotation
 
 id_generator = IDGenerator()
 
 
-@dataclass(unsafe_hash=True)
+@dataclass(unsafe_hash=True, eq=False)
 class WorldEntity(Symbol):
     """
     A class representing an entity in the world.
@@ -74,6 +79,11 @@ class WorldEntity(Symbol):
     def __post_init__(self):
         if self.name is None:
             self.name = PrefixedName(f"{self.__class__.__name__}_{hash(self)}")
+
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return False
+        return self.name == other.name and self._world is other._world
 
 
 @dataclass
@@ -102,7 +112,7 @@ class CollisionCheckingConfig:
     """
 
 
-@dataclass(unsafe_hash=True)
+@dataclass(unsafe_hash=True, eq=False)
 class KinematicStructureEntity(WorldEntity, SubclassJSONSerializer, ABC):
     """
     An entity that is part of the kinematic structure of the world.
@@ -188,7 +198,7 @@ class KinematicStructureEntity(WorldEntity, SubclassJSONSerializer, ABC):
         )
 
 
-@dataclass
+@dataclass(eq=False)
 class Body(KinematicStructureEntity, SubclassJSONSerializer):
     """
     Represents a body in the world.
@@ -222,6 +232,11 @@ class Body(KinematicStructureEntity, SubclassJSONSerializer):
     index: Optional[int] = field(default=None, init=False)
     """
     The index of the entity in `_world.kinematic_structure`.
+    """
+
+    inertial: Optional[Inertial] = field(default_factory=Inertial)
+    """
+    Inertia properties of the body.
     """
 
     def __post_init__(self):
@@ -278,11 +293,6 @@ class Body(KinematicStructureEntity, SubclassJSONSerializer):
 
     def __hash__(self):
         return hash(self.name)
-
-    def __eq__(self, other):
-        if other is None:
-            return False
-        return self.name == other.name and self._world is other._world
 
     def has_collision(
         self, volume_threshold: float = 1.001e-6, surface_threshold: float = 0.00061
@@ -386,12 +396,18 @@ class Body(KinematicStructureEntity, SubclassJSONSerializer):
         return result
 
     @classmethod
-    def _from_json(cls, data: Dict[str, Any]) -> Self:
+    def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
+        result = cls(name=PrefixedName.from_json(data["name"], **kwargs))
 
-        result = cls(name=PrefixedName.from_json(data["name"]))
+        # add the new body so that the transformation matrices in the shapes can use it as reference frame.
+        tracker = KinematicStructureEntityKwargsTracker.from_kwargs(kwargs)
+        if not tracker.has_kinematic_structure_entity(result.name):
+            tracker.add_kinematic_structure_entity(result)
+        else:
+            result = tracker.get_kinematic_structure_entity(result.name)
 
-        collision = ShapeCollection.from_json(data["collision"])
-        visual = ShapeCollection.from_json(data["visual"])
+        collision = ShapeCollection.from_json(data["collision"], **kwargs)
+        visual = ShapeCollection.from_json(data["visual"], **kwargs)
 
         for shape in itertools.chain(collision, visual):
             shape.origin.reference_frame = result
@@ -401,8 +417,20 @@ class Body(KinematicStructureEntity, SubclassJSONSerializer):
 
         return result
 
+    def get_semantic_annotations_by_type(
+        self, type_: Type[GenericSemanticAnnotation]
+    ) -> List[GenericSemanticAnnotation]:
+        """
+        Returns all semantic annotations of a given type which belong to this body.
+        :param type_: The type of semantic annotations to return.
+        :returns: A list of semantic annotations of the given type.
+        """
+        return list(
+            filter(lambda sem: isinstance(sem, type_), self._semantic_annotations)
+        )
 
-@dataclass
+
+@dataclass(eq=False)
 class Region(KinematicStructureEntity):
     """
     Virtual KinematicStructureEntity representing a semantic region in the world.
@@ -430,7 +458,7 @@ class Region(KinematicStructureEntity):
         cls,
         name: PrefixedName,
         points_3d: List[Point3],
-        reference_frame: Optional[Body] = None,
+        reference_frame: Optional[KinematicStructureEntity] = None,
         minimum_thickness: float = 0.005,
         sv_ratio_tol: float = 1e-7,
     ) -> Self:
@@ -507,7 +535,7 @@ class Region(KinematicStructureEntity):
         return result
 
     @classmethod
-    def _from_json(cls, data: Dict[str, Any]) -> Self:
+    def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
         result = cls(name=PrefixedName.from_json(data["name"]))
         area = ShapeCollection.from_json(data["area"])
         for shape in area:
@@ -539,12 +567,27 @@ class SemanticAnnotation(WorldEntity, SubclassJSONSerializer):
         If you do not want to change the behavior, make sure to use @dataclass(eq=False) to decorate your class.
     """
 
+    _synonyms: ClassVar[Set[str]] = set()
+    """
+    Additional names that can be used to match this object.
+    """
+
+    @classmethod
+    @lru_cache(maxsize=None)
+    def class_name_tokens(cls) -> Set[str]:
+        """
+        :return: Set of tokens from the class name.
+        """
+        return set(n.lower() for n in camel_case_split(cls.__name__))
+
     def __post_init__(self):
         if self.name is None:
             self.name = PrefixedName(
                 name=f"{self.__class__.__name__}_{id_generator(self)}",
                 prefix=self._world.name if self._world is not None else None,
             )
+        for entity in self.kinematic_structure_entities:
+            entity._semantic_annotations.add(self)
 
     def __hash__(self):
         return hash(
@@ -564,12 +607,17 @@ class SemanticAnnotation(WorldEntity, SubclassJSONSerializer):
 
         for semantic_annotation_field in fields(self):
             value = getattr(self, semantic_annotation_field.name)
-            if issubclass(type(value), SubclassJSONSerializer):
-                result[semantic_annotation_field.name] = value.to_json()
+            if semantic_annotation_field.name.startswith(
+                "_"
+            ) or semantic_annotation_field.name.startswith("__"):
+                continue
+            if not issubclass(type(value), SubclassJSONSerializer):
+                continue
+            result[semantic_annotation_field.name] = value.to_json()
         return result
 
     @classmethod
-    def _from_json(cls, data: Dict[str, Any]) -> Self:
+    def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
         semantic_annotation_fields = {f.name: f for f in fields(cls)}
 
         init_args = {}
@@ -577,9 +625,9 @@ class SemanticAnnotation(WorldEntity, SubclassJSONSerializer):
         for k, v in semantic_annotation_fields.items():
             if k not in data.keys():
                 continue
-            field_type = type_string_to_type(data[k]["type"])
+            field_type = type_string_to_type(data[k][JSON_TYPE_NAME])
             if issubclass(field_type, SubclassJSONSerializer):
-                init_args[k] = field_type.from_json(data[k])
+                init_args[k] = field_type.from_json(data[k], **kwargs)
 
         return cls(**init_args)
 
@@ -732,7 +780,7 @@ class SemanticEnvironmentAnnotation(RootedSemanticAnnotation):
         ) | {self.root}
 
 
-@dataclass
+@dataclass(eq=False)
 class Connection(WorldEntity, SubclassJSONSerializer):
     """
     Represents a connection between two entities in the world.
@@ -754,15 +802,18 @@ class Connection(WorldEntity, SubclassJSONSerializer):
     """
 
     parent_T_connection_expression: TransformationMatrix = field(default=None)
-    connection_T_child_expression: TransformationMatrix = field(default=None)
+    _connection_T_child_expression: TransformationMatrix = field(
+        default=None, init=False
+    )
     """
     The origin expression of a connection is split into 2 transforms:
     1. parent_T_connection describes the pose of the connection and is always constant.
        It typically describes the fixed part of the origin expression, equivalent to the origin tag in urdf. 
        For example, it is the point about which a revolute joint rotates.
-    2. connection_T_child describes the pose of the child relative to the connection.
+    2. _connection_T_child describes the pose of the child relative to the connection.
        This typically contains only the expressions that describe how the degrees of freedom move the child.
        For example, it describes how the angle of a revolute joint affects the child pose.
+       It is private mostly to avoid ORM logging.
 
     This split is necessary for copying Connections, because they need parent_T_connection as an input parameter and 
     connection_T_child is generated in the __post_init__ method.
@@ -771,27 +822,34 @@ class Connection(WorldEntity, SubclassJSONSerializer):
     def to_json(self) -> Dict[str, Any]:
         result = super().to_json()
         result["name"] = self.name.to_json()
-        result["parent"] = self.parent.to_json()
-        result["child"] = self.child.to_json()
-        result["parent_T_connection_expression"] = transformation_to_json(
-            self.parent_T_connection_expression
+        result["parent_name"] = self.parent.name.to_json()
+        result["child_name"] = self.child.name.to_json()
+        result["parent_T_connection_expression"] = (
+            self.parent_T_connection_expression.to_json()
         )
         return result
 
     @classmethod
-    def _from_json(cls, data: Dict[str, Any]) -> Self:
+    def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
+        tracker = KinematicStructureEntityKwargsTracker.from_kwargs(kwargs)
+        parent = tracker.get_kinematic_structure_entity(
+            name=PrefixedName.from_json(data["parent_name"])
+        )
+        child = tracker.get_kinematic_structure_entity(
+            name=PrefixedName.from_json(data["child_name"])
+        )
         return cls(
             name=PrefixedName.from_json(data["name"]),
-            parent=KinematicStructureEntity.from_json(data["parent"]),
-            child=KinematicStructureEntity.from_json(data["child"]),
-            parent_T_connection_expression=transformation_from_json(
-                data["parent_T_connection_expression"]
+            parent=parent,
+            child=child,
+            parent_T_connection_expression=TransformationMatrix.from_json(
+                data["parent_T_connection_expression"], **kwargs
             ),
         )
 
     @property
     def origin_expression(self) -> TransformationMatrix:
-        return self.parent_T_connection_expression @ self.connection_T_child_expression
+        return self.parent_T_connection_expression @ self._connection_T_child_expression
 
     @property
     def active_dofs(self) -> List[DegreeOfFreedom]:
@@ -813,6 +871,7 @@ class Connection(WorldEntity, SubclassJSONSerializer):
         self._world = world
 
     def __post_init__(self):
+
         self.name = self.name or self._generate_default_name(
             parent=self.parent, child=self.child
         )
@@ -820,8 +879,13 @@ class Connection(WorldEntity, SubclassJSONSerializer):
         # If I use default factories, I'd have to complicate the from_json, because I couldn't blindly pass these args
         if self.parent_T_connection_expression is None:
             self.parent_T_connection_expression = TransformationMatrix()
-        if self.connection_T_child_expression is None:
-            self.connection_T_child_expression = TransformationMatrix()
+        if self._connection_T_child_expression is None:
+            self._connection_T_child_expression = TransformationMatrix()
+
+        if not self.parent_T_connection_expression.is_constant():
+            raise RuntimeError(
+                f"Parent T matrix must be constant for connection. This one contains free variables: {self.parent_T_connection_expression.free_variables()}"
+            )
 
         if (
             self.parent_T_connection_expression.reference_frame is not None
@@ -832,7 +896,7 @@ class Connection(WorldEntity, SubclassJSONSerializer):
             )
 
         self.parent_T_connection_expression.reference_frame = self.parent
-        self.connection_T_child_expression.child_frame = self.child
+        self._connection_T_child_expression.child_frame = self.child
 
     @classmethod
     def _generate_default_name(
@@ -844,9 +908,6 @@ class Connection(WorldEntity, SubclassJSONSerializer):
 
     def __hash__(self):
         return hash((self.parent, self.child))
-
-    def __eq__(self, other):
-        return self.name == other.name
 
     @property
     def origin(self) -> cas.TransformationMatrix:
@@ -903,6 +964,51 @@ class Connection(WorldEntity, SubclassJSONSerializer):
         """
         raise NotImplementedError(
             "ConnectionWithDofs.create_with_dofs is not implemented."
+        )
+
+    def _find_references_in_world(
+        self, world: World
+    ) -> Tuple[
+        KinematicStructureEntity, KinematicStructureEntity, TransformationMatrix
+    ]:
+        """
+        Finds the reference frames to this connection in the given world and returns them as usable objects.
+        :param world: Reference to the world where the reference frames are searched.
+        :return: The other parent and child and new connection expressions with correct reference frames.
+        """
+        other_parent = world.get_kinematic_structure_entity_by_name(self.parent.name)
+        other_child = world.get_kinematic_structure_entity_by_name(self.child.name)
+
+        parent_T_connection_expression = deepcopy(self.parent_T_connection_expression)
+        parent_T_connection_expression.reference_frame = (
+            world.get_kinematic_structure_entity_by_name(
+                parent_T_connection_expression.reference_frame.name
+            )
+        )
+        return (
+            other_parent,
+            other_child,
+            parent_T_connection_expression,
+        )
+
+    def copy_for_world(self, world: World) -> Self:
+        """
+        Copies this connection to the given world the parent and child references are updated to the new world as well
+        as the references from the expression.
+        :param world: World in which the connection should be copied.
+        :return: The copied connection.
+        """
+        (
+            other_parent,
+            other_child,
+            parent_T_connection_expression,
+        ) = self._find_references_in_world(world)
+
+        return self.__class__(
+            other_parent,
+            other_child,
+            parent_T_connection_expression=parent_T_connection_expression,
+            name=PrefixedName(self.name.name, prefix=self.name.prefix),
         )
 
 
